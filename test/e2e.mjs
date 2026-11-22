@@ -393,6 +393,27 @@ try {
   check('RV5 a static host never sees /whoami or /lan.json requests', sReqs.every((u) => !/\/(whoami|lan\.json)/.test(u)), sReqs.filter((u) => /whoami|lan\.json/.test(u)).join(', '));
   await maskedStatic.close(); staticSrv.close();
 
+  // --- Guest names: two friendly words, not Guest-XXXX ------------------------------------------------------------
+  const fn = await A.evaluate(() => {
+    const ids = Array.from({ length: 200 }, (_, i) => `id${i}${Math.random().toString(36).slice(2, 8)}`);
+    return { same: window.rtc.friendlyName('abcd1234') === window.rtc.friendlyName('abcd1234'), distinct: new Set(ids.map(window.rtc.friendlyName)).size, shape: ids.every((i) => /^[A-Z][a-z]+ [A-Z][a-z]+$/.test(window.rtc.friendlyName(i))), len: Math.max(...ids.map((i) => window.rtc.friendlyName(i).length)) };
+  });
+  check('friendly names are stable, two words, short enough, and well spread', fn.same && fn.shape && fn.len <= 24 && fn.distinct >= 150, JSON.stringify(fn));
+  const guestUrl = ORIGIN + '/#k=' + 'U2'.padEnd(22, 'u');
+  const guests = [];
+  for (let i = 0; i < 2; i++) {
+    const ctx = await browser.newContext();
+    await ctx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+    const pg = await ctx.newPage();
+    await pg.goto(guestUrl); await join(pg);
+    guests.push(pg);
+  }
+  await connectedReady(guests[0], 1); await connectedReady(guests[1], 1);
+  const gNames = await Promise.all(guests.map((g) => g.evaluate(() => ({ me: document.querySelector('#roster .rrow .nm').textContent, other: [...window.rtc.S.peers.values()][0].name }))));
+  check('guests with no name get a meaningful two-word name, seen identically by the other side',
+    guests.length === 2 && gNames.every((n) => /^You — [A-Z][a-z]+ [A-Z][a-z]+$/.test(n.me) && /^[A-Z][a-z]+ [A-Z][a-z]+$/.test(n.other)) && gNames[0].me.replace('You — ', '') === gNames[1].other && !/Guest-/.test(JSON.stringify(gNames)), JSON.stringify(gNames));
+  for (const g of guests) await g.context().close();
+
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
   let rt4;

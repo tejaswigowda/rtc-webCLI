@@ -139,7 +139,7 @@
   <div class="card" id="pane-start">
     <div id="invitedNote" class="banner info hidden">You opened an invite link. Nothing is sent anywhere until you join.</div>
     <label for="name">Display name (self-asserted; others see it marked unverified)</label>
-    <input id="name" type="text" maxlength="24" autocomplete="off" placeholder="Your name">
+    <input id="name" type="text" maxlength="24" autocomplete="off" placeholder="Your name (leave blank and one is picked, like Brave Otter)">
 
     <div class="row">
       <button id="btnCreate" class="primary">Create a room</button>
@@ -709,9 +709,24 @@ const S = {
   uplinkBps: null, camSince: 0, relayOpen: 0, left: false,
 };
 
+// Guests who typed no name get a friendly two-word one ("Brave Otter"), derived from their connection id so it is
+// stable for the session and needs no coordination. It is still self-asserted, like any name.
+const NAME_ADJECTIVES = ['Brave', 'Bright', 'Calm', 'Cheery', 'Clever', 'Cosmic', 'Curious', 'Daring', 'Dapper', 'Eager', 'Gentle', 'Gleeful', 'Happy', 'Humble', 'Jolly', 'Kind', 'Lively', 'Lucky', 'Mellow', 'Merry', 'Mighty', 'Nimble', 'Noble', 'Peppy', 'Plucky', 'Quick', 'Quiet', 'Radiant', 'Snappy', 'Spry', 'Sturdy', 'Sunny', 'Swift', 'Vivid', 'Witty', 'Zesty', 'Breezy', 'Fuzzy', 'Golden', 'Hardy'];
+const NAME_ANIMALS = ['Otter', 'Falcon', 'Panda', 'Koala', 'Fox', 'Heron', 'Lynx', 'Badger', 'Dolphin', 'Gecko', 'Hedgehog', 'Ibis', 'Jaguar', 'Kiwi', 'Lemur', 'Manatee', 'Narwhal', 'Ocelot', 'Penguin', 'Quokka', 'Raven', 'Seal', 'Tortoise', 'Walrus', 'Yak', 'Zebra', 'Beaver', 'Cricket', 'Marmot', 'Newt', 'Puffin', 'Robin', 'Stoat', 'Wombat', 'Alpaca', 'Bison', 'Crane', 'Finch', 'Llama', 'Moose'];
+function friendlyName(id) {
+  let h = 2166136261;
+  for (const ch of String(id)) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  h >>>= 0;
+  return `${NAME_ADJECTIVES[h % NAME_ADJECTIVES.length]} ${NAME_ANIMALS[(h >>> 8) % NAME_ANIMALS.length]}`;
+}
+
 const displayName = (id) => {
   const p = S.peers.get(id);
-  return (p && p.name) || `Unnamed ${short(id)}`;
+  const base = p && p.name;
+  if (!base) return `Unnamed ${short(id)}`;
+  // Two people can end up with the same name; add the short id so they can be told apart.
+  const clash = (S.selfId && myName() === base) || [...S.peers.values()].some((q) => q.id !== id && q.name === base);
+  return clash ? `${base} · ${short(id)}` : base;
 };
 const isCompatible = (p) => p.hello && p.proto === PROTOCOL;
 
@@ -860,7 +875,7 @@ function onPeerLeave(peerId) {
   scheduleRender();
 }
 
-const myName = () => (settings.name || '').trim().slice(0, 24) || `Guest-${short(S.selfId)}`;
+const myName = () => (settings.name || '').trim().slice(0, 24) || friendlyName(S.selfId || '');
 
 async function sendHello(target) {
   const host = await hostProof().catch(() => null);
@@ -2916,7 +2931,7 @@ bootLanding();
 // Read-only handle for tests and DevTools.
 window.rtc = {
   version: VERSION, protocol: PROTOCOL, S, chooseLevel, rosterRows, allTracksEnded,
-  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, egressConfigProblems, activeRelays, rankLanAddr, usablePrivate, getLanIp: () => lanIp, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
+  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, friendlyName, egressConfigProblems, activeRelays, rankLanAddr, usablePrivate, getLanIp: () => lanIp, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
 };
 </script>
 </body>

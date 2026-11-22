@@ -112,7 +112,7 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 ## Usage
 
 ### ▤ 1 · Create or Open a Room
-**Create a room**, or open an invite link. Pick a display name. Names are self-asserted and shown as unverified.
+**Create a room**, or open an invite link. Type a display name, or leave it blank and you are given a friendly two-word one such as *Brave Otter* (picked from your connection id, so it is stable for the session; if two people end up with the same name, the short id is added to tell them apart). Names are self-asserted and shown as unverified, whether typed or picked.
 
 ### ⚙ 2 · Network Settings (optional)
 Under **Network settings**: LAN only (no STUN), the STUN server, your own TURN server, and a custom relay list.
