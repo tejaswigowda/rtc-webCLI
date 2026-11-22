@@ -387,7 +387,9 @@ try {
   for (const pg of sPages) { await pg.context().grantPermissions(['camera', 'microphone']); await pg.click('#btnMic'); await pg.waitForSelector('#preview'); }
   const nowSharing = await until(() => sPages[0].evaluate(() => !!window.rtc.getLanIp()), 15000);
   check('RV1 turning on the microphone reveals the local address, which is then shared', nowSharing, await sPages[0].evaluate(() => String(window.rtc.getLanIp())));
-  check('RV1 and the pair then connects without a reload', (await connectedReady(sPages[0], 1)) && (await connectedReady(sPages[1], 1)));
+  // Measured: 9 to 48 s after the microphone is allowed, depending on where the library's retry cycle is.
+  const reconnectedNoReload = await until(() => sPages[0].evaluate(() => window.rtc.S.peers.size === 1 && [...window.rtc.S.peers.values()][0].hello), 100000);
+  check('RV1 and the pair then connects without a reload (within about a minute)', reconnectedNoReload && (await connectedReady(sPages[1], 1)));
   check('RV5 a static host never sees /whoami or /lan.json requests', sReqs.every((u) => !/\/(whoami|lan\.json)/.test(u)), sReqs.filter((u) => /whoami|lan\.json/.test(u)).join(', '));
   await maskedStatic.close(); staticSrv.close();
 

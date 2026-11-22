@@ -12,7 +12,7 @@ A browser-based room for audio, video and screen share, opened with an invite li
 
 **Read more, with diagrams: [the About page](docs/about.html)** (also served at `/about.html`).
 
-**Status: v0.3.0 (protocol 3), first real-device runs on 2026-11-21: two pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
+**Status: v0.3.0 (protocol 3): not yet run on real devices. On v0.2.0 (2026-11-21): two runs pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
 ---
 
@@ -83,7 +83,7 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 
 - **Stays Connected**: the screen is kept awake during a call where the browser allows it. If the link to someone drops, the page says "Reconnecting…", the library re-dials by itself, and your camera and microphone resume without any action (tested). If you go offline, the page says so
 
-- **Same-Network Connections**: browsers hide each device's local address behind a `.local` name that other devices often cannot resolve. The page puts your real local address back into what it sends to peers, so people on the same Wi-Fi connect directly. This is on by default, disclosed before you first join, and can be turned off (`/shareaddr off`)
+- **Same-Network Connections**: browsers hide each device's local address behind a `.local` name that other devices often cannot resolve. The page puts your real local address back into what it sends to peers, so people on the same Wi-Fi can connect directly. **When the page is served by `server.js`, this works from the start. On a static host (including the live site), it takes effect once you turn on Mic or Camera and allow it, which is what lets the browser reveal your local address; the connection then retries by itself, usually within a minute.** On by default, disclosed before you first join (with the address that would be shared), and can be turned off (`/shareaddr off`). **Not yet confirmed on real devices**
 
 - **Visible Network Settings**: STUN is named and can be turned off ("LAN only"). TURN is never built in; you can add your own, and the path then shows **relay** and names the host
 
@@ -183,7 +183,7 @@ If you created the room, **Record** appears in the controls. Press it, read what
 
 The family's tools mostly send nothing. **This one has to.** The principle here is the one in the paper's wider form: nothing leaves except what the call needs, and every destination is declared.
 
-Every host the page is set to contact. This table is **declared, and consistent with the code as reviewed at commit `68ba43d`**: the relay list and the ICE-server list fully replace the library's defaults, so Trystero cannot contact other relays or add its own STUN servers. **A HAR comparison is still open (RT16).** `/egress` prints this table for your settings next to the hosts the page has actually been seen using, and marks any mismatch with ⚠.
+Every host the page is set to contact. This table is **declared, and checked by `npm test`**: the page keeps the exact relay list and ICE-server list it passes to the library, the test asserts the relay list equals the one shown, that the ICE-server list is always an explicit array (a missing one would let the library add its own STUN servers; a negative test confirms the check catches that), and that every WebSocket the page opens goes to a declared relay or the page origin. **A HAR comparison is still open (RT16).** `/egress` prints this table for your settings next to the hosts the page has actually been seen using, and marks any mismatch with ⚠.
 
 | Purpose | Host | Notes |
 |---|---|---|
@@ -214,7 +214,7 @@ The five relays are the first five of Trystero 0.27.0's default list for this ap
 
 **Verification in DevTools**
 1. Open DevTools (F12) → Network.
-2. Create a room and join. Requests: GETs to the page origin for `index.html`, `lib/` and `lan.json` (local server only). WebSocket connections to the relays listed above.
+2. Create a room and join. Requests: GETs to the page origin for `index.html` and `lib/`. When served by `server.js` there are two more, `lan.json` and `whoami` (same origin); a static host sees neither. WebSocket connections to the relays listed above.
 3. Open `chrome://webrtc-internals` to see the STUN server and the chosen path for each peer.
 4. Search the Network log for your secret (the characters after `#k=`). It appears in no request URL, header or body.
 
@@ -241,6 +241,8 @@ npm start          # http://localhost:8080/  and  https://<your LAN address>:844
 
 The server listens on all interfaces and prints your network address. It also serves **https on port 8443 with a self-signed certificate** (made on first start in `.certs/`, covering `localhost` and your LAN addresses, remade if your address changes). Browsers only give camera, microphone and the crypto this app needs to `https://` or `localhost`, so other devices must use the https address. Each device warns about the certificate once: Chrome/Edge/Firefox choose Advanced, then Proceed; iPhone Safari choose Show Details, then visit this website.
 
+`/whoami` and `/lan.json` exist only on this server (it marks its page so the browser knows to ask; static hosts never receive those requests). `/whoami` returns the caller's own local address only when that is certain; behind a tunnel or reverse proxy (any forwarding header, or a non-local `Host`) it answers `null`.
+
 When the page is opened on `localhost`, **Copy invite** and **QR** use the https LAN address (from `/lan.json`) instead of `127.0.0.1`, so other devices can open them. If someone opens the plain `http://<LAN IP>:8080` address instead, the page explains why it is blocked and links to the same invite on the https address. `NO_HTTPS=1` turns https off; `TLS_KEY` and `TLS_CERT` use your own certificate; `HTTPS_PORT` changes the port.
 
 **Other static servers (VS Code Live Server, `python -m http.server`, ...)** work too, including when you open `http://127.0.0.1:5500/docs`. They cannot report your LAN address, so the page tries to detect it from the browser. Many browsers hide it, in which case the **QR** dialog asks for it (for example `192.168.0.5:5500`). You can also set it under **Network settings** or with `/invitehost <host:port>`.
@@ -253,7 +255,13 @@ Camera, microphone, screen capture and the cryptography need `https://` or `http
 
 <p align="center"><img src="docs/img/same-network.svg" alt="Before, a phone could not resolve the laptop's hidden name. Now the page shares the laptop's real local address and the phone connects." width="820"></p>
 
-**Same Wi-Fi, but they do not connect.** In the first real-device test, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. The likely cause, and what was done about it: both browsers hide their local address behind a random `.local` name, and when the other device cannot resolve it, the only path left is through the router's public address, which most home routers do not loop back. With the phone on cellular that second path is a normal internet route, which is why it worked. **The page now puts your real local address back into the candidates it sends** (`/whoami` on the server, or the browser's own view), so same-network devices connect without needing the `.local` name to resolve. This is on by default and can be turned off under Network settings or with `/shareaddr off`; people in the room then see your private network address in addition to your public one. Tested with two default-settings Chromium windows that failed before the change; **not yet re-tested on a phone**. If it still fails, the router is probably blocking devices from reaching each other (client or AP isolation, common on guest Wi-Fi): turn that off, or add your own TURN server. The console line with both sides' address kinds is the useful report.
+**Same Wi-Fi, but they do not connect.** On v0.2.0, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. **Hypothesis (not confirmed):** both browsers hide their local address behind a random `.local` name, and when the other device cannot resolve it, the only path left is through the router's public address, which most home routers do not loop back. On cellular that second path is a normal internet route, which would explain why it worked. v0.3.0 puts your real local address back into the candidates it sends:
+- **Served by `server.js`:** the server tells each browser its own address (`/whoami`), so this works from the start. `/whoami` answers only when it is certain: not behind a tunnel or proxy, and only for a local caller.
+- **Static host, including the live site:** nothing can tell the page its address until the browser reveals it, which happens once you turn on **Mic** or **Camera** and allow it. The page then picks the address up, shares it, and restarts stuck connections; in testing the pair connected 9 to 48 seconds later, depending on where the library's retry cycle was. Until then the failure message names the hidden `.local` addresses and says so.
+- Tested with two default-settings Chromium windows on one machine, in both setups, including connecting after the microphone was allowed **without a reload**. **Not yet re-tested on a phone and laptop**; the manual rows are in the RT22 table.
+- You can turn sharing off under Network settings or with `/shareaddr off`; people in the room then see only your public address.
+
+If it still fails, the router is probably blocking devices from reaching each other (client or AP isolation, common on guest Wi-Fi): turn that off, or add your own TURN server. The console line with both sides' address kinds is the useful report.
 
 The roster entry (and console line) lists the kinds of addresses each side offered. The usual causes:
 
@@ -301,19 +309,20 @@ npx playwright install chromium    # first time only
 | RT13 | per-peer failure named with a reason within 15 s | `npm test` (Chromium with UDP blocked); "no answer" via a one-way mock relay (RF3) |
 | RT14 | STUN visible; LAN-only | built; **HAR check open** |
 | RT15 | TURN labelled as relay when used | built; **needs a real coturn run** |
-| RT16 | egress table equals the HAR host set | table written; `/egress` compares declared and observed hosts (`npm test`); **HAR comparison open** |
+| RT16 | egress table equals the HAR host set | table written; `/egress` compares declared and observed hosts; the library configuration and every opened WebSocket are checked (`npm test`, RV4); **HAR comparison open** |
 | RT17 | vendored, hash-pinned, nothing loads from outside the origin | `npm test` |
 | RT18 | empty room vs. unreachable relays vs. relays that accept sockets but drop or reject events | `npm test` against mock relays in `normal`, `drop` and `reject` modes (RF4) |
 | RT19 | console parity | `npm test` for core commands; `/turn` credentials are redacted from the echo (RF12) |
 | RT20 | non-secure origin explained | built; **manual check on a LAN IP open** |
 | RT21 | leaving ends every track | `npm test`; manual camera-light check open |
-| RT22 | browser-pair matrix | **open**: 2 runs pass, 1 fails (table below) |
-| RT23 | README makes only the claims in the work order's §4 | review, line by line (this file) |
+| RT22 | browser-pair matrix | **open**: on v0.2.0, 2 runs pass, 1 fails. v0.3.0 adds address sharing (RV1); retest pending (table below) |
+| RT23 | README makes only the claims in the [Claims](#claims) section (which extends the first work order's §4) | review, line by line (this file) |
 | RT24 | names labelled unverified | `npm test` |
-| RT25 | IP disclosure before first join | built; review open |
+| RT25 | IP disclosure before first join, including the local address that would be shared; the notice is keyed to its text, so people who accepted an older one see the new one again with the change marked (RV3, RV8) | `npm test`; review open |
 | RT26 | incompatible versions refused by name | `npm test` |
 | Devices and layout | device lists, switching the camera while live (track swapped on every connection, roster still complete), mirror toggle, permission-error help, speaker highlight with fake microphones, pin and unpin, speaker layout, hand, reactions, timer, offline banner, reconnect after a dropped link | `npm test`; **speakers, phones, flip camera, wake lock and full screen are not tested** |
-| Same network | two default-settings windows connect with addresses hidden and no mic preview; the server serves https and a plain-http LAN visit links to it | `npm test`; **phones and real routers not yet tested** |
+| Same network | with addresses hidden: two windows connect when served by `server.js`; on a static host they do not connect until the microphone is allowed, the failure names `.local`, and they then connect without a reload; the server serves https and a plain-http LAN visit links to it | `npm test`; **phones and real routers not yet tested** |
+| `/whoami` | answers only when certain: direct LAN caller, loopback with a local `Host`; null behind a tunnel, with a forwarding header, or for a public or Docker caller (RV2). A static host never sees `/whoami` or `/lan.json` (RV5). The local address chosen prefers 192.168, then 10, then 172.16–31, never Docker's bridge first (RV8) | `npm test` |
 | About page | static, no scripts, every diagram loads, no request leaves the origin | `npm test` |
 | Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
 | Recording | creator-only button; a non-creator is refused; everyone is told and told again when it stops; a claim from a non-creator is ignored; the saved file is non-empty | `npm test`; **late-joiner notice and long-recording memory use not yet tested** |
@@ -333,6 +342,9 @@ Chrome, Firefox, Safari on macOS, iOS Safari and Android Chrome, every pair, aud
 | 2026-11-21 | Chrome (macOS) ↔ Chrome Incognito (same machine) | one machine | signaling, data channel, chat; **no media** | pass | direct (local network) |
 | 2026-11-21 | Android Chrome ↔ Chrome (macOS), 3 people | phone on **cellular**, laptop on home Wi-Fi | video both ways, audio (muted) | pass | direct, via STUN |
 | 2026-11-21 | Android Chrome ↔ Chrome (macOS) | **both on the same home Wi-Fi** | joining | **fail**: did not connect. Message shown on the phone: **not recorded**. Cause: **not diagnosed** (hidden `.local` addresses, or the router not looping traffic back, or client isolation) | none |
+
+| pending | Android Chrome ↔ Chrome (macOS), **same home Wi-Fi, live site, v0.3.0, without Mic** | same Wi-Fi | joining | not yet run | |
+| pending | the same pair, **after turning on Mic on both** | same Wi-Fi | joining, then media | not yet run | |
 
 Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them. Any failing pair is listed here.
 
@@ -371,6 +383,31 @@ test/
 ## Dependencies
 
 **None at runtime** beyond the vendored Trystero and QR bundles. Dev only: esbuild (vendoring), Playwright and ws (tests).
+
+---
+
+## Claims
+
+What this README and the About page may say. RT23 reviews them against this list.
+
+**Allowed**
+- Audio, video and screen go directly between participants, encrypted (DTLS-SRTP), and never through a server of ours (we have none), unless you add your own TURN server.
+- No account. The invite secret, the part after `#`, never leaves the link.
+- Introductions use public relays (listed). They see your IP address, a hash of the room topic, who meets in a room and when, and encrypted connection data; not the secret and not your media.
+- A direct message is sent only to the browser of the person you chose; chat is kept in memory and is not stored by us.
+- Only the room creator is offered a Record button, and everyone else is told in their own window when a recording starts. This covers recording in this app only.
+- On the same network, the page shares your local address so connections can work without `.local` names. State the mechanism ("is designed to"), and the condition: served by `server.js`, or after Mic or Camera is allowed.
+- Works for small rooms. Quote a number only when it comes from the RT9 table, with the date and hardware.
+
+**Not allowed**
+- "Serverless" unqualified (introductions use third-party relays); "zero egress" or "nothing leaves your device".
+- "Zoom replacement" or "Zoom alternative", without the cap in the same sentence.
+- "Anonymous", or "private from other participants" (they see your IP address; names are self-asserted).
+- "Host controls", "kick" or "lock" (nobody can enforce them).
+- "Messages are private" or "secure from participants": a participant can screenshot or copy anything they receive.
+- "Recording is impossible without notice" or "nobody can record you": other software or a modified page can record, and this app cannot detect it. Keep the phrasing in [Recording](#recording-what-is-and-is-not-guaranteed) as the only one.
+- "Same-network calls work" or "fixes same-Wi-Fi failures", until the RT22 rows for the same-Wi-Fi pair pass on real devices.
+- Any cap number not produced by RT9.
 
 ---
 

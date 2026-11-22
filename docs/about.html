@@ -113,7 +113,7 @@
   <p>Browsers hide a device's local address behind a random <code>.local</code> name for privacy. Other devices on the same Wi-Fi often cannot resolve that name, and the fallback needs the router to loop traffic back, which most do not.</p>
   <figure>
     <img src="img/same-network.svg" alt="Before: a phone cannot resolve the laptop's hidden name. Now: the page shares the laptop's real local address and the phone connects.">
-    <figcaption>The page puts your real local address back where the <code>.local</code> name was, so same-network devices connect directly. It can be turned off in Network settings. If a router blocks devices from reaching each other (guest Wi-Fi, client isolation), nothing in the page can fix that; add your own TURN server.</figcaption>
+    <figcaption>The page puts your real local address back where the <code>.local</code> name was, so same-network devices can connect directly. With the local server this works from the start; on a static host (including the live site) it takes effect once you turn on Mic or Camera and allow it, because that is when the browser reveals the address. This has not yet been confirmed on real phones. It can be turned off in Network settings. If a router blocks devices from reaching each other (guest Wi-Fi, client isolation), nothing in the page can fix that; add your own TURN server.</figcaption>
   </figure>
 
   <h2 id="room">In a room</h2>

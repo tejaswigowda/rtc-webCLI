@@ -21,7 +21,7 @@
   <rect x="720" y="120" width="130" height="70" rx="10" fill="#1f2937" stroke="#58a6ff"/><text x="785" y="160" text-anchor="middle" fill="#e6edf3" font-size="15" font-weight="600">Laptop</text>
   <path d="M632 155 L 718 155" stroke="#3fb950" stroke-width="3" marker-end="url(#a)" marker-start="url(#a)"/>
   <text x="675" y="116" text-anchor="middle" fill="#e6edf3" font-size="13" font-family="ui-monospace,Menlo,monospace">192.168.0.206</text>
-  <text x="675" y="236" text-anchor="middle" fill="#8b949e" font-size="13">the server tells each browser its own local address;</text>
-  <text x="675" y="254" text-anchor="middle" fill="#8b949e" font-size="13">the page puts it back where the .local name was.</text>
-  <text x="675" y="278" text-anchor="middle" fill="#8b949e" font-size="13">Turn it off under Network settings if you prefer.</text>
+  <text x="675" y="236" text-anchor="middle" fill="#8b949e" font-size="13">the local server (or the browser, once Mic is allowed)</text>
+  <text x="675" y="254" text-anchor="middle" fill="#8b949e" font-size="13">tells the page its own address, which it puts back</text>
+  <text x="675" y="278" text-anchor="middle" fill="#8b949e" font-size="13">where the .local name was. Can be turned off.</text>
 </svg>
