@@ -283,6 +283,22 @@ try {
   check('hidden .local addresses: two windows connect with no mic preview, because the local address is shared', joined, (await sn[0].textContent('#consoleOut')).match(/Sharing your local network address \(\S+\)/)?.[0] || 'no address shared');
   await maskedBrowser.close();
 
+  // --- About page: static, self-contained, diagrams all load ----------------------------------------------
+  const aboutRes = await fetch(`${ORIGIN}/about.html`);
+  const aboutHtml = await aboutRes.text();
+  const imgSrcs = [...aboutHtml.matchAll(/<img[^>]+src="([^"]+)"/g)].map((m) => m[1]);
+  const imgRes = await Promise.all(imgSrcs.map((u) => fetch(`${ORIGIN}/${u}`)));
+  check('About page serves, has no scripts, and loads every diagram as SVG',
+    aboutRes.ok && !/<script/i.test(aboutHtml) && imgSrcs.length >= 6 && imgRes.every((r) => r.ok && /svg/.test(r.headers.get('content-type'))), `${imgSrcs.length} diagrams`);
+  const aboutPage = await (await browser.newContext()).newPage();
+  const aboutReqs = [];
+  aboutPage.on('request', (r) => aboutReqs.push(r.url()));
+  await aboutPage.goto(`${ORIGIN}/about.html`);
+  await aboutPage.waitForLoadState('networkidle');
+  const broken = await aboutPage.evaluate(() => [...document.images].filter((i) => !i.complete || i.naturalWidth === 0).length);
+  check('About page makes no request outside the origin and no diagram is broken', broken === 0 && aboutReqs.every((u) => u.startsWith(ORIGIN)), aboutReqs.filter((u) => !u.startsWith(ORIGIN)).join(', '));
+  await aboutPage.context().close();
+
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
   let rt4;

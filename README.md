@@ -4,11 +4,15 @@
 
 A browser-based room for audio, video and screen share, opened with an invite link. **Link in, live call out.** <b><ins>No accounts, and no media server of ours. Audio, video and screen go directly between participants</ins></b> (unless you add your own TURN server), encrypted, using WebRTC and [Trystero](https://github.com/dmotz/trystero) for introductions.
 
-<img src="demo.png" wicth='100%'>
+<img src="demo.png" alt="rtc-webCLI in a call" width="100%">
 
 ▶ **Live app:** https://tejaswigowda.com/rtc-webCLI/
 
 > Part of the **webCLI** family of browser tools. Same look and feel, same discipline about what leaves your device, with one difference stated up front: **a call has to send**. Your media goes to the other people in the room, and the introduction relays and a STUN server are contacted to set that up. Every host is listed in the [egress table](#privacy--egress), and nothing is claimed beyond it.
+
+<p align="center"><img src="docs/img/architecture.svg" alt="Three browsers joined directly to each other for audio, video and screen. Public relays and a STUN server are used only to set the connections up." width="820"></p>
+
+**Read more, with diagrams: [the About page](docs/about.html)** (also served at `/about.html`).
 
 **Status: v0.3.0 (protocol 3), first real-device runs on 2026-11-21: two pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
@@ -38,6 +42,14 @@ The paper defines the four properties (fidelity, progressive disclosure, offline
 | **repro** | not applicable |
 
 There is no `run=` agent surface and no `window.__webcli_result` yet.
+
+---
+
+## The invite link
+
+<p align="center"><img src="docs/img/invite-link.svg" alt="An invite link split into the part sent to the page server and the secret and creator hash after the hash sign, which never leave the browser." width="820"></p>
+
+Everything after the `#` stays in your browser. A new room is a new secret; there is no room name, list or account.
 
 ---
 
@@ -142,6 +154,9 @@ If you created the room, **Record** appears in the controls. Press it, read what
 
 ## Rooms, Caps and Seats
 
+<p align="center"><img src="docs/img/mesh.svg" alt="A four-person mesh with six links and a chart of how many copies each person uploads as the room grows." width="820"></p>
+
+
 - **Total cap:** a joiner past the cap is refused with an explanation, and is disconnected from everyone (never half-admitted). Provisional: 8.
 - **Video seats:** seats go to the first participants to join, **even if their camera is off**. Provisional: 4. A fifth person cannot take video while four people hold seats, whether or not those four are sending.
 - **Without a seat you neither send nor receive video.** Audio still works both ways. The refusal screen says this.
@@ -152,6 +167,9 @@ If you created the room, **Record** appears in the controls. Press it, read what
 ---
 
 ## How It Works
+
+<p align="center"><img src="docs/img/connect-flow.svg" alt="Seven steps from deriving the room to sending media. The relays are only involved in steps 2 and 3." width="760"></p>
+
 
 1. **Derive the room.** From the 16-byte secret: the relay topic is `SHA-256("rtc-webCLI/v1/topic" ‖ secret)`, and the SDP encryption password is `HKDF-SHA-256(secret, info = "rtc-webCLI/v1/sdp")`.
 2. **Introduce.** Trystero publishes encrypted offers and answers over Nostr relays. Relays see the topic hash and ciphertext, not the secret.
@@ -186,6 +204,9 @@ The five relays are the first five of Trystero 0.27.0's default list for this ap
 **Public relays will come and go.** The pinned relays are volunteer-run and some will go offline or start refusing events over time. The probes make that loud ("The introduction servers are connected but not passing messages") instead of looking like an empty room. Replace the list in `docs/index.html` when that happens.
 
 **What each party can see**
+
+<p align="center"><img src="docs/img/privacy.svg" alt="Four panels listing what people in the room, introduction relays, the STUN server and the page host can and cannot see." width="820"></p>
+
 - **Other participants:** your media (what you chose to send), your IP address, your self-asserted name.
 - **Introduction relays:** your IP address, a hash of the room topic and encrypted connection data. Not the secret, not your media. **A relay can see which IP addresses meet in the same room, and when**: every event carries the room's topic hash, which stays the same for the life of the room, and announcements repeat about once a minute.
 - **Retention:** signaling uses ephemeral Nostr event kinds (20000–29999), which relays are not supposed to store. We cannot verify that each relay complies.
@@ -231,6 +252,8 @@ When the page is opened on `localhost`, **Copy invite** and **QR** use the https
 Camera, microphone, screen capture and the cryptography need `https://` or `http://localhost`. Over plain `http://<LAN IP>` the page explains this instead of failing with a permission error.
 
 ### Troubleshooting: "Couldn't reach X directly"
+
+<p align="center"><img src="docs/img/same-network.svg" alt="Before, a phone could not resolve the laptop's hidden name. Now the page shares the laptop's real local address and the phone connects." width="820"></p>
 
 **Same Wi-Fi, but they do not connect.** In the first real-device test, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. The likely cause, and what was done about it: both browsers hide their local address behind a random `.local` name, and when the other device cannot resolve it, the only path left is through the router's public address, which most home routers do not loop back. With the phone on cellular that second path is a normal internet route, which is why it worked. **The page now puts your real local address back into the candidates it sends** (`/whoami` on the server, or the browser's own view), so same-network devices connect without needing the `.local` name to resolve. This is on by default and can be turned off under Network settings or with `/shareaddr off`; people in the room then see your private network address in addition to your public one. Tested with two default-settings Chromium windows that failed before the change; **not yet re-tested on a phone**. If it still fails, the router is probably blocking devices from reaching each other (client or AP isolation, common on guest Wi-Fi): turn that off, or add your own TURN server. The console line with both sides' address kinds is the useful report.
 
@@ -293,6 +316,7 @@ npx playwright install chromium    # first time only
 | RT26 | incompatible versions refused by name | `npm test` |
 | Devices and layout | device lists, switching the camera while live (track swapped on every connection, roster still complete), mirror toggle, permission-error help, speaker highlight with fake microphones, pin and unpin, speaker layout, hand, reactions, timer, offline banner, reconnect after a dropped link | `npm test`; **speakers, phones, flip camera, wake lock and full screen are not tested** |
 | Same network | two default-settings windows connect with addresses hidden and no mic preview; the server serves https and a plain-http LAN visit links to it | `npm test`; **phones and real routers not yet tested** |
+| About page | static, no scripts, every diagram loads, no request leaves the origin | `npm test` |
 | Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
 | Recording | creator-only button; a non-creator is refused; everyone is told and told again when it stops; a claim from a non-creator is ignored; the saved file is non-empty | `npm test`; **late-joiner notice and long-recording memory use not yet tested** |
 
@@ -328,6 +352,8 @@ Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them
 
 ```
 docs/
+├── about.html              # About page: how it works, with diagrams (static, no scripts)
+├── img/                    # SVG diagrams used by the About page and this README
 ├── index.html              # The whole app (UI, rooms, roster, console)
 └── lib/
     ├── trystero-nostr.js   # Vendored Trystero (Nostr strategy), hash-pinned

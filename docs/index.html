@@ -174,7 +174,7 @@
   </div>
 
   <div class="card dim">
-    <strong style="color:var(--fg)">How this works, honestly</strong>
+    <strong style="color:var(--fg)">How this works, honestly</strong> <span class="dim">(<a href="about.html">with diagrams</a>)</span>
     <ul class="plain">
       <li>Audio, video and screen go directly between participants, encrypted (DTLS-SRTP).</li>
       <li>The invite secret lives only after the <code>#</code> in the link; browsers never send it to a server.</li>
@@ -192,6 +192,7 @@
     <span class="grow" style="flex:1"></span>
     <span class="dim mono" id="timer" title="Time since you joined"></span>
     <span class="dim mono" id="rt4check"></span>
+    <a href="about.html" target="_blank" rel="noopener" class="dim" style="font-size:13px" title="How it works, what it sees, its limits">About</a>
     <button id="btnInvite">Copy invite</button>
     <button id="btnQr">QR</button>
   </div>
