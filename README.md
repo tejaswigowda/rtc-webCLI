@@ -10,7 +10,7 @@ A browser-based room for audio, video and screen share, opened with an invite li
 
 <p align="center"><img src="docs/img/architecture.svg" alt="Three browsers joined directly to each other for audio, video and screen. Public relays and a STUN server are used only to set the connections up." width="820"></p>
 
-**Read more, with diagrams: [the About page](docs/about.html)** (also served at `/about.html`).
+**Read more, with diagrams: [the About page](docs/about/index.html)** (served at `/about/`).
 
 **Status: v0.3.0 (protocol 3): not yet run on real devices. On v0.2.0 (2026-11-21): two runs pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
@@ -77,7 +77,9 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 
 - **Device Control**: **Devices…** lists cameras, microphones and (where the browser allows it) speakers, with a microphone level meter and a speaker test sound. Changing the camera or microphone while live swaps the track on every connection without dropping the call. **Flip camera** cycles cameras on a phone. If a device is unplugged or taken by another app, the page says so and stops that stream. A blocked or busy camera gets plain-language help for each browser instead of a bare error. Your choices are remembered
 
-- **Works on a Phone**: the same header as the other webCLIs (logo, "peer-to-peer" and "No media server" tags, and book, info and GitHub icons), and the family colour palette. Every control is an icon with a label that collapses to the icon alone on small screens, with 44 px touch targets and Leave always on screen. On a phone the video grid is the main view; a chat button swaps it for the roster, chat and console, and a **More** button holds layout, send quality and Move room. Dialogs slide up from the bottom, inputs are sized so iOS does not zoom, and the screen's safe areas are respected. The About page is responsive too
+- **New Room (+)**: a **+** in the header, and the logo, go back to the start screen with no invite in the address bar. They always ask first, saying what will happen: in a room you are disconnected from everyone and your devices stop; with only an invite open, the invite is dropped from the address bar (if you created the room, the prompt reminds you to copy the link). **+** is hidden on a bare start screen, where there is nowhere to go back to
+
+- **Works on a Phone**: the same header as the other webCLIs (logo, "peer-to-peer" and "No media server" tags, and +, book, info and GitHub icons), and the family colour palette. Every control is an icon with a label that collapses to the icon alone on small screens, with 44 px touch targets and Leave always on screen. On a phone the video grid is the main view; a chat button swaps it for the roster, chat and console, and a **More** button holds layout, send quality and Move room. Dialogs slide up from the bottom, inputs are sized so iOS does not zoom, and the screen's safe areas are respected. The About page is responsive too
 
 - **Layout**: tiles show who is speaking (a green outline, computed in your browser from each person's audio) and who is muted. **Grid** or **Speaker** layout; **Pin** (spotlight) any tile; **Full screen** on a tile (button or double-click); your own camera view can be mirrored (others always see it unmirrored)
 
@@ -365,7 +367,7 @@ Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them
 
 ```
 docs/
-├── about.html              # About page: how it works, with diagrams (static, no scripts)
+├── about/index.html        # About page: how it works, with diagrams (static, no scripts)
 ├── img/                    # SVG diagrams used by the About page and this README
 ├── index.html              # The whole app (UI, rooms, roster, console)
 └── lib/

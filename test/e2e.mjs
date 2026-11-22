@@ -285,16 +285,16 @@ try {
   await maskedBrowser.close();
 
   // --- About page: static, self-contained, diagrams all load ----------------------------------------------
-  const aboutRes = await fetch(`${ORIGIN}/about.html`);
+  const aboutRes = await fetch(`${ORIGIN}/about/`);
   const aboutHtml = await aboutRes.text();
   const imgSrcs = [...aboutHtml.matchAll(/<img[^>]+src="([^"]+)"/g)].map((m) => m[1]);
-  const imgRes = await Promise.all(imgSrcs.map((u) => fetch(`${ORIGIN}/${u}`)));
+  const imgRes = await Promise.all(imgSrcs.map((u) => fetch(new URL(u, `${ORIGIN}/about/`))));
   check('About page serves, has no scripts, and loads every diagram as SVG',
     aboutRes.ok && !/<script/i.test(aboutHtml) && imgSrcs.length >= 6 && imgRes.every((r) => r.ok && /svg/.test(r.headers.get('content-type'))), `${imgSrcs.length} diagrams`);
   const aboutPage = await (await browser.newContext()).newPage();
   const aboutReqs = [];
   aboutPage.on('request', (r) => aboutReqs.push(r.url()));
-  await aboutPage.goto(`${ORIGIN}/about.html`);
+  await aboutPage.goto(`${ORIGIN}/about/`);
   await aboutPage.waitForLoadState('networkidle');
   const broken = await aboutPage.evaluate(() => [...document.images].filter((i) => !i.complete || i.naturalWidth === 0).length);
   check('About page makes no request outside the origin and no diagram is broken', broken === 0 && aboutReqs.every((u) => u.startsWith(ORIGIN) || u.startsWith('data:')), aboutReqs.filter((u) => !u.startsWith(ORIGIN) && !u.startsWith('data:')).join(', '));
@@ -427,7 +427,7 @@ try {
   const mp = await phoneCtx.newPage();
   const noOverflow = () => mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.body.scrollWidth <= innerWidth + 1);
   await mp.goto(`${ORIGIN}/#k=${'M2'.padEnd(22, 'm')}`);
-  check('phone: landing has no horizontal scroll and the header shows the three icons', await noOverflow() && (await mp.$$('#top .help-nav .header-icon')).length === 3);
+  check('phone: landing has no horizontal scroll and the header shows its four icons (+, book, info, GitHub) with an invite open', await noOverflow() && (await mp.$$eval('#top .help-nav .header-icon', (els) => els.filter((e) => e.getBoundingClientRect().width > 0).length)) === 4);
   await mp.click('#btnJoin'); await mp.waitForSelector('#room:not(.hidden)');
   const phone = await mp.evaluate(() => {
     const vis = (sel) => { const e = document.querySelector(sel); return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0; };
@@ -441,9 +441,40 @@ try {
   await mp.click('#btnMore');
   check('phone: More opens layout and quality inside the screen', await mp.evaluate(() => { const r = document.querySelector('#moreCtl').getBoundingClientRect(); return r.width > 0 && r.left >= 0 && r.right <= innerWidth; }) && await noOverflow());
   const aboutM = await phoneCtx.newPage();
-  await aboutM.goto(`${ORIGIN}/about.html`);
+  await aboutM.goto(`${ORIGIN}/about/`);
   check('phone: About page has no horizontal scroll', await aboutM.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   await phoneCtx.close();
+
+  // --- "+" (new room) confirms before going back to the start screen -------------------------------------------------
+  const nctx = await browser.newContext();
+  await nctx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Nia', lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+  const np = await nctx.newPage();
+  await np.goto(`${ORIGIN}/`);
+  check('"+" is hidden on a bare start screen', !(await np.isVisible('#btnNew')));
+  await np.goto(`${ORIGIN}/#k=${'N3'.padEnd(22, 'n')}`);
+  check('"+" appears when an invite is open', await np.isVisible('#btnNew'));
+  await np.click('#btnNew');
+  check('"+" with an invite asks before dropping it', /Go back to the start screen/.test(await np.textContent('#overlayCard')));
+  await np.click('#overlayCard button:has-text("Stay here")');
+  check('Stay keeps the invite in the address bar', (await np.evaluate(() => location.hash)).startsWith('#k=') && !(await np.isVisible('#overlay')));
+  await np.click('#btnNew'); await np.click('#overlayCard button:has-text("Go to the start")');
+  await np.waitForSelector('#btnCreate:not(.hidden)');
+  check('confirming returns to the start screen with no hash', (await np.evaluate(() => location.hash)) === '' && await np.isVisible('#btnCreate'));
+  await np.click('#btnCreate'); await np.click('#btnJoin'); await np.waitForSelector('#room:not(.hidden)');
+  const watcher = await open('Wes', { url: np.url() }); await join(watcher);
+  await connectedReady(watcher, 1);
+  await np.click('#btnNew');
+  check('"+" in a room asks, naming what will happen', /Start a new room\?/.test(await np.textContent('#overlayCard')) && /disconnected from everyone/.test(await np.textContent('#overlayCard')));
+  await np.click('#overlayCard button:has-text("Stay in this room")');
+  check('Stay keeps you in the room', await np.isVisible('#room') && await np.evaluate(() => !window.rtc.S.left));
+  await np.click('#brand');
+  check('the logo asks the same question', /Start a new room\?/.test(await np.textContent('#overlayCard')));
+  await np.click('#overlayCard button:has-text("Stay in this room")');
+  await np.click('#btnNew'); await np.click('#overlayCard button:has-text("Leave and go to the start")');
+  await np.waitForSelector('#btnCreate:not(.hidden)', { timeout: 20000 });
+  check('confirming leaves the room and lands on the start screen with no hash', (await np.evaluate(() => location.hash)) === '' && !(await np.isVisible('#room')));
+  check('the other person sees them leave', await until(() => watcher.evaluate(() => window.rtc.S.peers.size === 0), 20000));
+  await watcher.close(); await nctx.close();
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
