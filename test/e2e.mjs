@@ -515,6 +515,16 @@ try {
     dg.mine === 'MY_MDNS' && dg.bothBlocked === 'BOTH_PRIVATE_BLOCKED' && dg.noRemoteHost === 'NO_REMOTE_HOST' && dg.theirs === 'THEIR_MDNS' && dg.lanOnly === 'LAN_ONLY' && dg.different === 'DIFFERENT_NETWORKS' && dg.none === 'NO_CANDIDATES' && dg.unknown === 'UNKNOWN', JSON.stringify(dg));
   check('SW4 candidate classes: mdns, private, public, relay', dg.cls === 'mdns,private,public,relay', dg.cls);
 
+  // --- Run button: the console and chat can be used without an Enter key -----------------------------------------
+  await A.click('#tabConsole');
+  await A.fill('#consoleIn', '/cap'); await A.click('#consoleRun');
+  check('the console Run button runs the command and clears the input', await until(async () => /Room cap/.test(await A.textContent('#consoleOut')), 5000) && (await A.inputValue('#consoleIn')) === '');
+  await A.click('#tabChat');
+  await A.fill('#chatIn', 'sent with the button'); await A.click('#chatSend');
+  check('the chat Send button sends', await until(async () => /sent with the button/.test(await B.textContent('#chatOut')), 15000));
+  check('both inputs ask phone keyboards for a Send key', await A.evaluate(() => document.querySelector('#consoleIn').enterKeyHint === 'send' && document.querySelector('#chatIn').enterKeyHint === 'send'));
+  await A.click('#tabConsole');
+
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
   let rt4;
