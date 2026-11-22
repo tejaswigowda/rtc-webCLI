@@ -382,9 +382,14 @@ try {
   await until(async () => /\.local/.test(await sPages[0].textContent('#roster')), 45000);
   const stuck = await sPages[0].evaluate(() => window.rtc.S.peers.size === 0 && window.rtc.getLanIp() === null);
   const stuckText = await sPages[0].textContent('#roster');
-  check('RV1 static host, addresses hidden, no media: the pair does not connect and the roster names the hidden .local addresses', stuck && /\.local/.test(stuckText) && /Mic/.test(stuckText), stuckText.slice(-200));
+  check('RV1 static host, addresses hidden, no media: the pair does not connect and the roster names the hidden .local addresses', stuck && /\.local/.test(stuckText) && /Allow local connections/.test(stuckText), stuckText.slice(-200));
   // The user allows the microphone (the browser remembers the permission, which is what unmasks the address).
-  for (const pg of sPages) { await pg.context().grantPermissions(['camera', 'microphone']); await pg.click('#btnMic'); await pg.waitForSelector('#preview'); }
+  // One side uses the Mic button, the other the one-click helper (which releases the device at once).
+  for (const pg of sPages) await pg.context().grantPermissions(['camera', 'microphone']);
+  await sPages[0].click('#btnMic'); await sPages[0].waitForSelector('#preview');
+  await sPages[1].fill('#consoleIn', '/localfix'); await sPages[1].press('#consoleIn', 'Enter');
+  const helperWorked = await until(() => sPages[1].evaluate(() => !!window.rtc.getLanIp()), 15000);
+  check('RV1 "Allow local connections" reveals the address, then releases the microphone', helperWorked && await sPages[1].evaluate(() => window.rtc.allTracksEnded()));
   const nowSharing = await until(() => sPages[0].evaluate(() => !!window.rtc.getLanIp()), 15000);
   check('RV1 turning on the microphone reveals the local address, which is then shared', nowSharing, await sPages[0].evaluate(() => String(window.rtc.getLanIp())));
   // Measured: 9 to 48 s after the microphone is allowed, depending on where the library's retry cycle is.
@@ -412,6 +417,8 @@ try {
   const gNames = await Promise.all(guests.map((g) => g.evaluate(() => ({ me: document.querySelector('#roster .rrow .nm').textContent, other: [...window.rtc.S.peers.values()][0].name }))));
   check('guests with no name get a meaningful two-word name, seen identically by the other side',
     guests.length === 2 && gNames.every((n) => /^You — [A-Z][a-z]+ [A-Z][a-z]+$/.test(n.me) && /^[A-Z][a-z]+ [A-Z][a-z]+$/.test(n.other)) && gNames[0].me.replace('You — ', '') === gNames[1].other && !/Guest-/.test(JSON.stringify(gNames)), JSON.stringify(gNames));
+  const helloCounts = await Promise.all(guests.map((g) => g.evaluate(() => (document.querySelector('#consoleOut').textContent.match(/said hello/g) || []).length)));
+  check('two people joining within seconds of each other do not loop on hello', helloCounts.every((n) => n >= 1 && n <= 2), JSON.stringify(helloCounts));
   for (const g of guests) await g.context().close();
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
@@ -477,6 +484,7 @@ try {
   check('RT8 joiner N+1 gets a screen naming the cap and the reason', refused, refused ? (await over.textContent('#overlayCard')).slice(0, 120) : '');
   check('RT8 existing call unaffected', await connectedReady(caps[0], 2));
   const third = caps[2];
+  await connectedReady(third, 2); // seats are only known once the others' hellos have arrived
   await third.click('#btnCam');
   check('RT8 video seat refusal for the 3rd video peer', await until(async () => /Video is full for this room/.test(await third.textContent('#overlayCard')), 10000));
 

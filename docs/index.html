@@ -556,6 +556,28 @@ async function resolveOwnLan(force = false) {
 }
 let lanResolved = false;
 
+// One click that does what turning on the microphone would do for this purpose, without turning anything on:
+// ask for access (the browser then reveals the local address), read it, and release the device at once.
+async function allowLocalConnections() {
+  if (!mediaAvailable()) return;
+  log('Asking the browser for microphone access so it can show this page your local address. Nothing is turned on or sent.');
+  let stream = null, firstError = null;
+  for (const c of [{ audio: true }, { video: true }]) {
+    try { stream = await navigator.mediaDevices.getUserMedia(c); break; } catch (e) { firstError ??= e; }
+  }
+  if (!stream) {
+    const x = explainMediaError(firstError, 'mic');
+    log(`Local connections not enabled: ${firstError?.message}`, 'err');
+    showScreen({ title: x.title, body: [...x.body, 'Without access, the browser keeps your local address hidden, and devices on the same network may not be able to connect. A TURN server is the other way around it.'], actions: [{ label: 'OK' }] });
+    return;
+  }
+  stream.getTracks().forEach((t) => S.allTracks.add(t));
+  await refreshOwnLan(); // read the address while access is active
+  stream.getTracks().forEach((t) => t.stop());
+  if (!lanIp) log("The browser still did not show your local address. If you are on a VPN or a network that blocks devices from reaching each other, a TURN server is the way around it.", 'err');
+  scheduleRender();
+}
+
 // A browser only reveals its local address after the page has been allowed camera or microphone access. When
 // that happens mid-call, pick the address up and nudge connections that were stuck without it.
 async function refreshOwnLan() {
@@ -639,17 +661,18 @@ function summarizeCandidates(lines) {
   return counts.size ? [...counts].map(([k, n]) => `${k}×${n}`).join(', ') : 'none';
 }
 
+const isMdnsHost = (l) => / typ host/.test(l) && l.split(' ')[4]?.endsWith('.local');
+
 function failureDetail(pc) {
   const local = pc._localList, remote = pc.remoteCandidates();
   const remoteOnlyLocal = remote.length > 0 && remote.every((l) => / typ host/.test(l));
-  const mdns = (l) => / typ host/.test(l) && l.split(' ')[4]?.endsWith('.local');
-  const hidden = remote.some(mdns) && local.some(mdns);
-  const parts = [`you offered ${summarizeCandidates(local)}; they offered ${summarizeCandidates(remote)}`];
-  if (hidden) {
-    parts.push(`both browsers hid their local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Fix: turn on Mic (or Camera) in both windows and allow it. The browser then lets this page see your local address, the page shares it${settings.shareLan ? '' : ' (sharing is off in Network settings, so turn it on)'}, and the connection retries by itself. The preview stays private until you press Send`);
-    if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
-  } else if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
-  else if (remoteOnlyLocal) parts.push('they offered only local-network addresses: either you are on different networks, or this network blocks devices from reaching each other (guest Wi-Fi, client isolation, VPN, firewall). A TURN server is the fix for different networks');
+  const myHidden = local.some(isMdnsHost) && !lanIp; // hidden, and we do not know our own address to put back
+  const theirHidden = remote.some(isMdnsHost);
+  const parts = [`you offered ${summarizeCandidates(local)}${lanIp ? ` (your local address ${lanIp} is shared in place of the .local name)` : ''}; they offered ${summarizeCandidates(remote)}`];
+  if (myHidden) parts.push(`your browser hides your local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Press "Allow local connections": the browser asks for microphone access (nothing is turned on or sent), then lets this page see your local address and share it${settings.shareLan ? '' : ' (sharing is off in Network settings, so turn it on)'}. The connection then retries by itself`);
+  if (theirHidden) parts.push('their browser hides theirs; they need to do the same (their page offers the button)');
+  if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
+  if (!myHidden && !theirHidden && remoteOnlyLocal) parts.push('they offered only local-network addresses: either you are on different networks, or this network blocks devices from reaching each other (guest Wi-Fi, client or AP isolation, VPN, firewall). A TURN server is the fix for different networks');
   return parts.join('. ');
 }
 
@@ -668,10 +691,14 @@ function noteFailure(pc, peerId) {
   const reason = classifyFailure(pc);
   const known = peerId || peerIdForPc(pc);
   const detail = failureDetail(pc);
+  const hidden = pc._localList.some(isMdnsHost) && !lanIp;
+  // The library retries every few seconds, so the same failure repeats. Count it instead of listing it again.
+  const again = failures.find((f) => f.reason === reason && f.detail === detail && f.peerId === (known || null));
+  if (again) { again.count = (again.count || 1) + 1; again.at = Date.now(); again.pc = pc; scheduleRender(); return; }
   // The library's own error for the same attempt may already be listed (it knows the id, not the cause).
   const sibling = failures.find((f) => !f.pc && Date.now() - f.at < 30000);
-  if (sibling) Object.assign(sibling, { pc, reason, detail, peerId: sibling.peerId || known || null });
-  else failures.push({ pc, at: Date.now(), reason, detail, peerId: known || null });
+  if (sibling) Object.assign(sibling, { pc, reason, detail, hidden, peerId: sibling.peerId || known || null });
+  else failures.push({ pc, at: Date.now(), reason, detail, hidden, peerId: known || null });
   while (failures.length > 8) failures.shift();
   log(`Couldn't reach ${failureWho({ peerId: known })} directly: ${reason}. ${detail}.`, 'err');
   scheduleRender();
@@ -898,6 +925,7 @@ async function onHello(peerId, m) {
     if (!ok && !p.hostClaimRejected) { p.hostClaimRejected = true; log(`${String(m.name ?? short(peerId)).slice(0, 24)} claims to be the room creator but could not prove it. Ignored.`, 'err'); }
     p.isHost = ok;
   }
+  const firstHello = !p.hello;
   p.name = String(m.name ?? '').slice(0, 24);
   p.proto = m.proto;
   p.ver = String(m.ver ?? '');
@@ -906,13 +934,9 @@ async function onHello(peerId, m) {
   if (p.proto !== PROTOCOL) {
     log(`${displayName(peerId)} is on an incompatible version (protocol ${p.proto}, you are on ${PROTOCOL}). No media is exchanged with them.`, 'err');
   } else {
-    // Lift only during the first moments after my first hello, and never once I am sending video.
-    S.firstHelloAt ||= Date.now();
-    if (Date.now() - S.firstHelloAt < 4000 && !S.pinnedSelf && p.joinedAt >= S.joinedAt) {
-      S.joinedAt = p.joinedAt + 1;
-      sendHello();
-    }
-    log(`${displayName(peerId)} said hello (unverified name).`);
+    // Join order comes from each person's own clock. A clock far behind can rank someone ahead of people who have
+    // not started video yet, but never ahead of anyone who is sending: those seats are pinned (see seatOrder).
+    if (firstHello) log(`${displayName(peerId)} said hello (unverified name).`);
     if (!p.greeted) { p.greeted = true; chime('join'); }
   }
   applyRec(p);
@@ -927,7 +951,9 @@ function onState(peerId, m) {
   const handWas = !!p.state.hand;
   p.state = { cam: !!m.cam, mic: !!m.mic, micMuted: !!m.micMuted, screen: !!m.screen, screenAudio: !!m.screenAudio, hand: !!m.hand };
   if (p.state.hand && !handWas) { chatSystem(`${displayName(peerId)} raised their hand.`); chime('hand'); }
-  if (p.state.cam || p.state.screen) { if (!wasSending && !p.pinned) p.pinned = seated(peerId); } else p.pinned = false;
+  // Anyone sending video holds a seat. Pin them on sight rather than comparing clocks: a joiner with a slow clock
+  // would otherwise order itself ahead of the very people it is watching send.
+  p.pinned = !!(p.state.cam || p.state.screen);
   for (const kind of ['cam', 'mic', 'screen']) if (!p.state[kind]) detachRemote(p, kind);
   scheduleRender();
 }
@@ -1569,8 +1595,9 @@ function renderRoster() {
 
   for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
     const row = el('div', { class: 'rrow fail' });
-    row.append(el('div', { class: 'nm', text: `Couldn't reach ${failureWho(f)} directly` }));
+    row.append(el('div', { class: 'nm', text: `Couldn't reach ${failureWho(f)} directly${f.count > 1 ? ` (tried ${f.count} times)` : ''}` }));
     row.append(el('div', { class: 'meta', text: `${f.reason} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer${f.detail ? '. ' + f.detail + '.' : ''}` }));
+    if (f.hidden && !lanIp) row.append(el('button', { text: 'Allow local connections', title: 'Asks the browser for microphone access so it reveals your local address. Nothing is turned on or sent.', onclick: allowLocalConnections }));
     kids.push(row);
   }
   box.replaceChildren(...kids);
@@ -2605,6 +2632,7 @@ const COMMANDS = {
       '/invitehost <host:port>|auto   set the LAN address used in invite links',
       '/lan on|off       LAN only (no STUN) — applies on next join',
       '/shareaddr on|off share your local network address so same-network devices connect (default on)',
+      '/localfix         ask for microphone access once, only so the browser reveals your local address (nothing is turned on)',
       '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
       '/relays           introduction servers: probe result and room socket for each',
       '/egress           hosts you SET to contact vs hosts OBSERVED this session (⚠ on a mismatch)',
@@ -2705,6 +2733,7 @@ const COMMANDS = {
     await resolveInviteBase(true);
     log(`Invite links now use ${inviteBase}`);
   },
+  localfix() { return allowLocalConnections(); },
   shareaddr(args) {
     if (!['on', 'off'].includes(args[0])) { log(`Sharing your local network address is ${settings.shareLan ? 'on' : 'off'}${lanIp ? ` (${lanIp})` : ''}. Usage: /shareaddr on|off (applies on next join)`); return; }
     settings.shareLan = args[0] === 'on'; saveSettings();
