@@ -4,6 +4,8 @@
 
 A browser-based room for audio, video and screen share, opened with an invite link. **Link in, live call out.** <b><ins>No accounts, and no media server of ours. Audio, video and screen go directly between participants</ins></b> (unless you add your own TURN server), encrypted, using WebRTC and [Trystero](https://github.com/dmotz/trystero) for introductions.
 
+<img src="demo.png" wicth='100%'>
+
 ▶ **Live app:** https://tejaswigowda.com/rtc-webCLI/
 
 > Part of the **webCLI** family of browser tools. Same look and feel, same discipline about what leaves your device, with one difference stated up front: **a call has to send**. Your media goes to the other people in the room, and the introduction relays and a STUN server are contacted to set that up. Every host is listed in the [egress table](#privacy--egress), and nothing is claimed beyond it.
