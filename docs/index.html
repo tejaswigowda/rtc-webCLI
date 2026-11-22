@@ -734,7 +734,7 @@ async function allowLocalConnections() {
 }
 
 // A browser only reveals its local address after the page has been allowed camera or microphone access. When
-// that happens mid-call, pick the address up and nudge connections that were stuck without it.
+// that happens mid-call, pick the address up so connection attempts made from now on carry it.
 async function refreshOwnLan() {
   if (!settings.shareLan || !S.room || S.left) return;
   const before = lanIp;
@@ -742,15 +742,9 @@ async function refreshOwnLan() {
   if (!ip || ip === before) return;
   lanIp = ip;
   log(`Now sharing your local network address (${ip}), so devices on the same network can connect.`);
-  for (const pc of [...allPCs]) {
-    if (pcClosed(pc)) continue;
-    try {
-      if (pc.connectionState !== 'connected') { pc.restartIce(); continue; }
-      let direct = false;
-      (await pc.getStats()).forEach((r) => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded' && /host/.test(`${r.localCandidateType}${r.remoteCandidateType}`)) direct = true; });
-      if (!direct) pc.restartIce();
-    } catch { /* closing */ }
-  }
+  // No restartIce() here: renegotiating a live connection while the user is about to add a camera makes the library
+  // drop the offer that carries the new tracks, and the other side never receives them. New connection attempts pick
+  // the address up by themselves, because they are created after lanIp is set.
 }
 
 let pcCounter = 0;
@@ -1877,11 +1871,44 @@ function scheduleRender() {
   queueMicrotask(() => { renderQueued = false; render(); });
 }
 
+// If someone says they are sending something and it has not arrived after a few seconds, ask them to send it again.
+// Adding tracks to a live connection needs a renegotiation, and one can be lost (for example when another
+// renegotiation overlaps it). Resending starts a fresh one; nothing else is needed.
+function watchMissingStreams() {
+  const now = Date.now();
+  for (const p of S.peers.values()) {
+    if (!isCompatible(p)) continue;
+    p.waitSince ??= {};
+    p.lastResend ??= {};
+    p.resends ??= {};
+    for (const kind of ['cam', 'mic', 'screen']) {
+      if (!p.state[kind] || p.streams[kind]) { delete p.waitSince[kind]; delete p.resends[kind]; continue; }
+      p.waitSince[kind] ??= now;
+      if (now - p.waitSince[kind] > 8000 && now - (p.lastResend[kind] || 0) > 12000) {
+        p.lastResend[kind] = now;
+        p.resends[kind] = (p.resends[kind] || 0) + 1;
+        const what = kind === 'cam' ? 'camera' : kind === 'mic' ? 'microphone' : 'screen';
+        if (p.resends[kind] > 2) {
+          // Asking twice did not help, so the connection itself is stuck. Drop it; the library re-dials within seconds
+          // and both sides send everything again over the fresh connection.
+          log(`${displayName(p.id)}'s ${what} still has not arrived. Reconnecting to them.`, 'err');
+          p.resends[kind] = 0; p.waitSince[kind] = now;
+          closePeer(p.id);
+        } else {
+          log(`${displayName(p.id)}'s ${what} has not arrived; asking them to send it again.`);
+          S.actions.ctl.send({ t: 'resend', kind }, { target: p.id }).catch(() => {});
+        }
+      }
+    }
+  }
+}
+
 function tick() {
   if (S.left) return;
   watchConnectTimeouts();
   watchRelayTraffic();
   noAnswerWatch();
+  watchMissingStreams();
   for (const r of S.room ? Object.entries(S.room.getPeers()) : []) { const q = S.peers.get(r[0]); if (q && r[1].connection?.connectionState === 'connected') q.wasConnected = true; }
   const secs = Math.floor((Date.now() - S.joinStart) / 1000);
   $('#timer').textContent = `in room ${secs >= 3600 ? Math.floor(secs / 3600) + ':' : ''}${String(Math.floor(secs / 60) % 60).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
@@ -2049,6 +2076,18 @@ function closePeer(id) {
 
 function onCtl(from, m) {
   if (!m || typeof m !== 'object') return;
+  if (m.t === 'resend' && ['cam', 'mic', 'screen'].includes(m.kind)) {
+    const stream = S.my[m.kind], p = S.peers.get(from);
+    if (!stream || !p) return;
+    p.resendHandled ??= {};
+    if (Date.now() - (p.resendHandled[m.kind] || 0) < 10000) return; // at most one resend per kind every 10 s
+    p.resendHandled[m.kind] = Date.now();
+    const sent = S.sent[m.kind], st = sent.get(from);
+    if (st) { try { S.room.removeStream(st, { target: from }); } catch {} sent.delete(from); }
+    log(`${displayName(from)} did not receive your ${m.kind === 'cam' ? 'camera' : m.kind === 'mic' ? 'microphone' : 'screen'}; sending it again.`);
+    setTimeout(reconcile, 500);
+    return;
+  }
   if (m.t === 'remove' && typeof m.target === 'string') {
     if (m.target === S.selfId) {
       showScreen({

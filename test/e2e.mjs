@@ -395,6 +395,10 @@ try {
   // Measured: 9 to 48 s after the microphone is allowed, depending on where the library's retry cycle is.
   const reconnectedNoReload = await until(() => sPages[0].evaluate(() => window.rtc.S.peers.size === 1 && [...window.rtc.S.peers.values()][0].hello), 100000);
   check('RV1 and the pair then connects without a reload (within about a minute)', reconnectedNoReload && (await connectedReady(sPages[1], 1)));
+  // The case that was reported: media turned on after the local address became known must reach the other side live.
+  await sPages[1].click('#btnCam'); await sPages[1].waitForSelector('#preview'); await sPages[1].click('#preview button.primary');
+  check('media turned on after the address was shared reaches the other side without a refresh',
+    await until(() => sPages[0].evaluate(() => [...window.rtc.S.peers.values()].some((p) => p.streams.cam)), 60000));
   check('RV5 a static host never sees /whoami or /lan.json requests', sReqs.every((u) => !/\/(whoami|lan\.json)/.test(u)), sReqs.filter((u) => /whoami|lan\.json/.test(u)).join(', '));
   await maskedStatic.close(); staticSrv.close();
 
@@ -475,6 +479,18 @@ try {
   check('confirming leaves the room and lands on the start screen with no hash', (await np.evaluate(() => location.hash)) === '' && !(await np.isVisible('#room')));
   check('the other person sees them leave', await until(() => watcher.evaluate(() => window.rtc.S.peers.size === 0), 20000));
   await watcher.close(); await nctx.close();
+
+  // --- A renegotiation that gets stuck is recovered, not left until someone refreshes ----------------------------
+  const wedgeUrl = ORIGIN + '/#k=' + 'Wg'.padEnd(22, 'w');
+  const wA = await open('Wedge-A', { url: wedgeUrl }); await join(wA);
+  const wB = await open('Wedge-B', { url: wedgeUrl }); await join(wB);
+  await connectedReady(wA, 1); await connectedReady(wB, 1);
+  // Force the failure seen on a phone: an ICE restart overlapping the offer that carries a new camera.
+  await wA.evaluate(() => { for (const pc of window.rtc.allPCs) pc.restartIce(); });
+  await wA.click('#btnCam'); await wA.waitForSelector('#preview'); await wA.click('#preview button.primary');
+  check('a stuck renegotiation is detected and the camera still arrives (asks again, then reconnects)',
+    await until(() => wB.evaluate(() => [...window.rtc.S.peers.values()].some((p) => p.streams.cam)), 120000));
+  await wA.close(); await wB.close();
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
