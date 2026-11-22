@@ -51,7 +51,7 @@ There is no `run=` agent surface and no `window.__webcli_result` yet.
 
 - **A Roster You Can Trust**: every connection that carries your media is listed, with what it receives (video, audio, screen, or "unlabelled media"). Membership follows live senders, not connection state, so a connection that is only "disconnected" for a moment stays listed. The top bar shows a check that is made independently of how the roster is built: it reads the rendered roster back and fails if any receiving connection, or any kind of media it receives, is missing
 
-- **Loud Failures**: if a pair of people cannot connect within 15 seconds, the roster names it and the reason class (no candidates, ICE failed, DTLS failed). If someone announces themselves in the room but no answer ever arrives, that is named too ("no answer"). No endless spinner
+- **Loud Failures**: if a pair of people cannot connect within 15 seconds, the roster lists it with the reason class (no candidates, ICE failed, DTLS failed) and the kinds of addresses each side offered; the same line goes to the console. There is no separate banner for it. If someone announces themselves in the room but no answer ever arrives, that is named too ("no answer"). No endless spinner
 
 - **Empty vs. Broken**: "No one else is here yet", "Someone is trying to connect…", "The introduction servers are connected but not passing messages" and "Can't reach the introduction servers" are four different messages, so nobody waits forever on a dead relay. "Reachable" means a relay returned a test event, not merely that a socket opened
 
@@ -104,7 +104,7 @@ The first time, you are told that others in the room can see your IP address. Yo
 **Camera** and **Mic** open a local preview. Press **Send to the room** to publish, or **Cancel** to release the device. **Share screen** uses the browser's own picker. Screen audio is offered only where the browser supports it.
 
 ### ✎ 5 · Watch the Roster
-The roster shows each person, how you are connected (direct or relay), what they receive from you, and what they send you. Failures to connect appear there too.
+The roster shows each person, how you are connected (direct or relay), what they receive from you, and what they send you. Failures to connect appear there too, with the reason and what each side offered, and in the console. They are not repeated as a banner.
 
 ### 💬 6 · Chat
 Open the **Chat** tab. Pick **Everyone** or one person under **To**, type, press Enter. `/chat <message>` and `/dm <peer> <message>` do the same from the console.
@@ -219,7 +219,7 @@ TLS_KEY=key.pem TLS_CERT=cert.pem npm start     # each device accepts the self-s
 
 ### Troubleshooting: "Couldn't reach X directly"
 
-The message lists the kinds of addresses each side offered. The usual causes:
+The roster entry (and console line) lists the kinds of addresses each side offered. The usual causes:
 
 - **Hidden local addresses (`.local` names).** Browsers hide their local address behind a random `.local` name until the page has an active camera or microphone, and two browsers on one computer often cannot resolve each other's. Fix: press **Mic** (or **Camera**) in both windows. The preview stays private until you press **Send**, each browser then shows its real local address, and the connection retries by itself. (Checked with two Chromium windows on one machine: they fail by default and connect once both previews are on.) Alternatives: use two devices, or turn address hiding off for testing: Chrome `chrome://flags/#enable-webrtc-hide-local-ips-with-mdns` set to Disabled, Firefox `media.peerconnection.ice.obfuscate_host_addresses` set to `false`, Safari Develop → WebRTC → Disable ICE Candidate Restrictions.
 - **Different networks, or a network that blocks devices from reaching each other** (guest Wi-Fi, client isolation, VPN). Add your own TURN server in Network settings.

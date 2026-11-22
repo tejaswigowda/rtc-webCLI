@@ -300,8 +300,8 @@ try {
   await G.goto(failUrl); await join(G);
   const H = await open('Hank', { url: failUrl }); await join(H);
   const t0 = Date.now();
-  const failed13 = await until(async () => /Couldn't reach .* directly \((no candidates|ICE failed|DTLS failed)\)/.test(await H.textContent('#status')), 40000);
-  check('RT13 unreachable pair is named with a reason class', failed13, `${Math.round((Date.now() - t0) / 1000)}s: ${(await H.textContent('#status')).slice(0, 120)}`);
+  const failed13 = await until(async () => /Couldn't reach .* directly.*(no candidates|ICE failed|DTLS failed)/.test(await H.textContent('#roster')), 40000);
+  check('RT13 unreachable pair is named with a reason class', failed13, `${Math.round((Date.now() - t0) / 1000)}s: ${(await H.textContent('#roster')).slice(-160)}`);
   await blocked.close();
 
   // --- Plain static host (like VS Code Live Server): no /lan.json, page opened at /docs ---------
@@ -388,8 +388,8 @@ try {
   const OA = await open('Ola', { url: owUrl, relays: oneway.url }); await join(OA);
   const OB = await open('Ole', { url: owUrl, relays: oneway.url }); await join(OB);
   const trying = await until(async () => /Someone is trying to connect/.test(await OA.textContent('#status')), 25000);
-  const noAnswer = await until(async () => /\(no answer\)/.test(await OA.textContent('#status')), 45000);
-  check('RF3 offer without an answer: "Someone is trying…", then a named "no answer" failure', trying && noAnswer, (await OA.textContent('#status')).slice(0, 160));
+  const noAnswer = await until(async () => /no answer/.test(await OA.textContent('#roster')), 45000);
+  check('RF3 offer without an answer: "Someone is trying…", then a named "no answer" failure', trying && noAnswer, (await OA.textContent('#roster')).slice(-160));
   check('RF3 never says "No one else is here yet" while someone is announcing', !/No one else is here yet/.test(await OA.textContent('#status')));
   await OA.close(); await OB.close(); oneway.close();
 

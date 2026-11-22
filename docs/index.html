@@ -1279,9 +1279,6 @@ function renderStatus() {
   } else if (peers === 0 && !failures.some((x) => Date.now() - x.at < 5 * 60000)) {
     msgs.push({ cls: 'info', text: 'No one else is here yet. Share the invite link; the room exists only while someone is in it.' });
   }
-  for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
-    msgs.push({ cls: 'bad', text: `Couldn't reach ${failureWho(f)} directly (${f.reason}).` });
-  }
   const sig = JSON.stringify(msgs);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
