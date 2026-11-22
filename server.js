@@ -5,6 +5,7 @@ import https from 'node:https';
 import os from 'node:os';
 import { readFileSync } from 'node:fs';
 import { ensureCert } from './scripts/cert.mjs';
+import { answerWhoami, rankLan } from './scripts/whoami.mjs';
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,13 +15,9 @@ const port = Number(process.env.PORT) || 8080;
 const host = process.env.HOST || '0.0.0.0';
 const httpsPort = Number(process.env.HTTPS_PORT) || 8443;
 
-// Private IPv4 addresses first, so invite links point at an address other devices can reach.
+// This machine's IPv4 addresses, best first (192.168.* then 10.* then 172.16-31.*; Docker's bridge last).
 function lanAddresses() {
-  const rank = (a) => (/^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))/.test(a) ? 0 : 1);
-  return Object.values(os.networkInterfaces()).flat()
-    .filter((i) => i && i.family === 'IPv4' && !i.internal)
-    .map((i) => i.address)
-    .sort((a, b) => rank(a) - rank(b));
+  return rankLan(Object.values(os.networkInterfaces()).flat().filter((i) => i && i.family === 'IPv4' && !i.internal).map((i) => i.address));
 }
 
 const types = {
@@ -44,11 +41,9 @@ const handler = async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (url.pathname === '/whoami') {
-      // The address this request came from, so a browser that hides its own local address can still share it.
-      let ip = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
-      if (ip === '::1' || ip.startsWith('127.')) ip = lanAddresses()[0] || null;
+      // The caller's own local address, only when that is certain (not behind a tunnel or proxy).
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
-      res.end(JSON.stringify({ ip }));
+      res.end(JSON.stringify(answerWhoami({ remoteAddress: req.socket.remoteAddress, headers: req.headers, lan: lanAddresses() })));
       return;
     }
     if (url.pathname === '/lan.json') {
@@ -64,7 +59,9 @@ const handler = async (req, res) => {
       return;
     }
     if (!(await stat(file)).isFile()) throw new Error('not a file');
-    const body = await readFile(file);
+    let body = await readFile(file);
+    // Marks the page as served by this server, so it only asks for /lan.json and /whoami here (static hosts never see them).
+    if (file.endsWith('index.html')) body = Buffer.from(body.toString('utf8').replace('<meta name="referrer"', '<meta name="rtc-server" content="1">\n<meta name="referrer"'));
     res.writeHead(200, {
       'Content-Type': types[path.extname(file)] || 'application/octet-stream',
       'Cache-Control': 'no-store',

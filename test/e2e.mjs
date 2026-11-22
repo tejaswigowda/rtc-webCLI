@@ -4,6 +4,7 @@ import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { startMockRelay } from './mock-relay.mjs';
 import http from 'node:http';
+import { answerWhoami, rankLan } from '../scripts/whoami.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,7 +42,7 @@ async function open(name, { url = ORIGIN + '/', dev = {}, relays = relay.url, la
   await ctx.addInitScript(({ dev, relays, lan, name }) => {
     if (!localStorage.getItem('rtc.settings')) {
       localStorage.setItem('rtc.settings', JSON.stringify({ name, lan, relays }));
-      localStorage.setItem('rtc.ipNoticeSeen', '1');
+      localStorage.setItem('rtc.ipNotice.2', '1');
     }
     if (Object.keys(dev).length) localStorage.setItem('rtc.dev', JSON.stringify(dev));
   }, { dev, relays, lan, name });
@@ -273,7 +274,7 @@ try {
     const ctx = await maskedBrowser.newContext();
     await ctx.addInitScript(({ relays, n, share }) => {
       localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: false, relays, shareLan: share }));
-      localStorage.setItem('rtc.ipNoticeSeen', '1');
+      localStorage.setItem('rtc.ipNotice.2', '1');
     }, { relays: relay.url, n, share });
     const pg = await ctx.newPage();
     await pg.goto(sameNetUrl); await join(pg);
@@ -298,6 +299,97 @@ try {
   const broken = await aboutPage.evaluate(() => [...document.images].filter((i) => !i.complete || i.naturalWidth === 0).length);
   check('About page makes no request outside the origin and no diagram is broken', broken === 0 && aboutReqs.every((u) => u.startsWith(ORIGIN)), aboutReqs.filter((u) => !u.startsWith(ORIGIN)).join(', '));
   await aboutPage.context().close();
+
+  // --- RV2: /whoami answers only when it is certain ----------------------------------------------------------
+  const lanSet = ['192.168.0.5'];
+  const w = (remoteAddress, headers) => answerWhoami({ remoteAddress, headers, lan: lanSet });
+  check('RV2 direct LAN request → the caller\'s address', w('::ffff:192.168.0.77', { host: '192.168.0.5:8443' }).ip === '192.168.0.77');
+  check('RV2 loopback with Host localhost → the server\'s LAN address', w('127.0.0.1', { host: 'localhost:8080' }).ip === '192.168.0.5' && w('::1', { host: '127.0.0.1:8080' }).ip === '192.168.0.5');
+  check('RV2 loopback with a tunnel Host → null, with a reason', w('127.0.0.1', { host: 'x.ngrok-free.app' }).ip === null && !!w('127.0.0.1', { host: 'x.ngrok-free.app' }).reason);
+  check('RV2 any forwarding header → null', ['x-forwarded-for', 'forwarded', 'cf-connecting-ip'].every((h) => w('192.168.0.77', { host: '192.168.0.5', [h]: '1.2.3.4' }).ip === null));
+  check('RV2 public caller or Docker address → null', w('8.8.8.8', { host: '192.168.0.5' }).ip === null && w('172.17.0.2', { host: '192.168.0.5' }).ip === null);
+
+  // --- RV8: the chosen local address ignores Docker and VPN when a better one exists -----------------------------
+  const mixed = ['172.17.0.1', '10.8.0.2', '192.168.0.5'];
+  check('RV8 ranking prefers 192.168, then 10, never Docker first (server)', rankLan(mixed)[0] === '192.168.0.5' && rankLan(['172.17.0.1', '10.8.0.2'])[0] === '10.8.0.2' && rankLan(['172.17.0.1', '172.20.0.3'])[0] === '172.20.0.3');
+  check('RV8 same ranking and Docker exclusion in the page', await A.evaluate((m) => [...m].sort((a, b) => window.rtc.rankLanAddr(a) - window.rtc.rankLanAddr(b))[0] === '192.168.0.5' && !window.rtc.usablePrivate('172.17.0.1') && window.rtc.usablePrivate('172.20.0.3') && window.rtc.usablePrivate('10.8.0.2'), mixed));
+
+  // --- RV3: the join notice is keyed to its text ----------------------------------------------------------------
+  const oldCtx = await browser.newContext();
+  await oldCtx.addInitScript(({ relays }) => {
+    localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Old', lan: true, relays }));
+    localStorage.setItem('rtc.ipNoticeSeen', '1'); // accepted on v0.1 / v0.2
+  }, { relays: relay.url });
+  const oldPage = await oldCtx.newPage();
+  await oldPage.goto(`${ORIGIN}/#k=${'O'.repeat(22)}`);
+  await oldPage.click('#btnJoin');
+  await oldPage.waitForSelector('#overlayCard:has-text("Before you join")', { timeout: 15000 });
+  const noticeText = await oldPage.textContent('#overlayCard');
+  check('RV3 someone who accepted an older notice sees the new one, with the change marked', /New:/.test(noticeText) && /local network address/.test(noticeText), noticeText.slice(0, 160));
+  check('RV8 the notice shows the address that would be shared', /\(\d+\.\d+\.\d+\.\d+\)/.test(noticeText), noticeText.match(/\(\d+\.\d+\.\d+\.\d+\)/)?.[0] || 'none');
+  await oldPage.click('#overlayCard button:has-text("Join anyway")');
+  await oldPage.waitForSelector('#room:not(.hidden)');
+  check('RV3 accepting stores the current notice key only', await oldPage.evaluate(() => !!localStorage.getItem('rtc.ipNotice.2')));
+  await oldCtx.close();
+
+  // --- RV4: what is passed to the library is explicit, and the page opens sockets only to declared hosts ----------
+  const cfgProblems = await A.evaluate(() => window.rtc.egressConfigProblems());
+  check('RV4 LAN-only: relay list and ICE servers passed to the library are exactly the declared ones', cfgProblems.length === 0, cfgProblems.join('; '));
+  const wsHosts = [];
+  const cfgCtx = await browser.newContext();
+  await cfgCtx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Cfg', lan: false, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+  const cfgPage = await cfgCtx.newPage();
+  cfgPage.on('websocket', (ws) => wsHosts.push(new URL(ws.url()).host));
+  await cfgPage.goto(`${ORIGIN}/#k=${'F'.repeat(22)}`); await join(cfgPage);
+  await sleep(7000);
+  const cfg2 = await cfgPage.evaluate(() => ({ problems: window.rtc.egressConfigProblems(), relays: window.rtc.activeRelays() }));
+  const allowedHosts = new Set([...cfg2.relays.map((u) => new URL(u).host), new URL(ORIGIN).host]);
+  check('RV4 STUN mode: configuration check passes', cfg2.problems.length === 0, cfg2.problems.join('; '));
+  check('RV4 every WebSocket the page opened went to a declared relay or the page origin', wsHosts.length > 0 && wsHosts.every((h) => allowedHosts.has(h)), [...new Set(wsHosts)].join(', '));
+  await cfgCtx.close();
+  const negPage = await open('Neg2', { url: `${ORIGIN}/#k=${'Z'.repeat(22)}`, dev: { breakIce: true } }); await join(negPage);
+  check('RV4 negative test: an undefined iceServers is caught', (await negPage.evaluate(() => window.rtc.egressConfigProblems())).some((p) => /iceServers is not an array/.test(p)));
+  await negPage.close();
+
+  // --- RV1 / RV5: a static host (no /whoami, no /lan.json), addresses hidden ---------------------------------------
+  const serverMeta = (await (await fetch(`${ORIGIN}/`)).text()).includes('<meta name="rtc-server"');
+  const staticHtml = await (async () => {
+    const root2 = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    return (await readFile(path.join(root2, 'docs/index.html'), 'utf8')).includes('<meta name="rtc-server"');
+  })();
+  check('RV5 server.js marks the page; the static file does not', serverMeta && !staticHtml);
+  const repoRoot2 = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const staticSrv = http.createServer(async (req, res) => {
+    let p = new URL(req.url, 'http://x').pathname;
+    if (p === '/docs' || p === '/docs/') p = '/docs/index.html';
+    try {
+      const body = await readFile(path.join(repoRoot2, p));
+      res.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : p.endsWith('.json') ? 'application/json' : 'text/html' }).end(body);
+    } catch { res.writeHead(404).end('nope'); }
+  });
+  await new Promise((r) => staticSrv.listen(0, '127.0.0.1', r));
+  const staticUrl = `http://localhost:${staticSrv.address().port}/docs/#k=${'Y'.repeat(22)}`;
+  const maskedStatic = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+  const sPages = [], sReqs = [];
+  for (const n of ['Sia', 'Sol']) {
+    const ctx = await maskedStatic.newContext(); // no pre-granted permission: that alone would unmask the addresses
+    await ctx.addInitScript(({ relays, n }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n });
+    const pg = await ctx.newPage();
+    pg.on('request', (r) => sReqs.push(r.url()));
+    await pg.goto(staticUrl); await join(pg);
+    sPages.push(pg);
+  }
+  await until(async () => /\.local/.test(await sPages[0].textContent('#roster')), 45000);
+  const stuck = await sPages[0].evaluate(() => window.rtc.S.peers.size === 0 && window.rtc.getLanIp() === null);
+  const stuckText = await sPages[0].textContent('#roster');
+  check('RV1 static host, addresses hidden, no media: the pair does not connect and the roster names the hidden .local addresses', stuck && /\.local/.test(stuckText) && /Mic/.test(stuckText), stuckText.slice(-200));
+  // The user allows the microphone (the browser remembers the permission, which is what unmasks the address).
+  for (const pg of sPages) { await pg.context().grantPermissions(['camera', 'microphone']); await pg.click('#btnMic'); await pg.waitForSelector('#preview'); }
+  const nowSharing = await until(() => sPages[0].evaluate(() => !!window.rtc.getLanIp()), 15000);
+  check('RV1 turning on the microphone reveals the local address, which is then shared', nowSharing, await sPages[0].evaluate(() => String(window.rtc.getLanIp())));
+  check('RV1 and the pair then connects without a reload', (await connectedReady(sPages[0], 1)) && (await connectedReady(sPages[1], 1)));
+  check('RV5 a static host never sees /whoami or /lan.json requests', sReqs.every((u) => !/\/(whoami|lan\.json)/.test(u)), sReqs.filter((u) => /whoami|lan\.json/.test(u)).join(', '));
+  await maskedStatic.close(); staticSrv.close();
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
@@ -407,7 +499,7 @@ try {
   const bctx = await blocked.newContext();
   await bctx.addInitScript(({ relays }) => {
     localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Gina', lan: true, relays }));
-    localStorage.setItem('rtc.ipNoticeSeen', '1');
+    localStorage.setItem('rtc.ipNotice.2', '1');
   }, { relays: relay.url });
   const G = await bctx.newPage();
   const failUrl = ORIGIN + '/#k=' + 'U'.repeat(22);
@@ -435,7 +527,7 @@ try {
   const masked = await chromium.launch();
   const mctx = await masked.newContext();
   await mctx.addInitScript(() => localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Liv', lan: true, relays: 'ws://127.0.0.1:1' })));
-  await mctx.addInitScript(() => localStorage.setItem('rtc.ipNoticeSeen', '1'));
+  await mctx.addInitScript(() => localStorage.setItem('rtc.ipNotice.2', '1'));
   const L = await mctx.newPage();
   await L.goto(plainUrl);
   await L.click('#btnCreate');
@@ -468,7 +560,7 @@ try {
     const ctx = await hiddenBrowser.newContext({ permissions: ['camera', 'microphone'] });
     await ctx.addInitScript(({ relays, n }) => {
       localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays }));
-      localStorage.setItem('rtc.ipNoticeSeen', '1');
+      localStorage.setItem('rtc.ipNotice.2', '1');
     }, { relays: relay.url, n });
     const pg = await ctx.newPage();
     await pg.goto(hiddenUrl); await join(pg);

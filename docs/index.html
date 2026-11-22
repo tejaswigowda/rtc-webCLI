@@ -273,7 +273,10 @@ const RELAY_GRACE_MS = 8000;
 const HELLO_TIMEOUT_MS = 6000;
 const WARMUP_MS = 12000;
 const SETTINGS_KEY = 'rtc.settings';
-const IP_NOTICE_KEY = 'rtc.ipNoticeSeen';
+// Keyed to the notice text: bump the number whenever the text changes, so people who accepted an older one see it again.
+const IP_NOTICE_VERSION = 2;
+const IP_NOTICE_KEY = `rtc.ipNotice.${IP_NOTICE_VERSION}`;
+const IP_NOTICE_OLD_KEYS = ['rtc.ipNoticeSeen', 'rtc.ipNotice.1'];
 const AUTOJOIN_KEY = 'rtc.autojoin';
 
 // Test hook, honoured on localhost only: {protocol, audioCap, videoCap}.
@@ -386,6 +389,15 @@ function parseInviteHost(raw) {
   } catch { return null; }
 }
 
+// Only a page served by server.js has /lan.json and /whoami; on static hosts those requests are never made.
+const SERVED_BY_SERVER = !!document.querySelector('meta[name="rtc-server"]');
+const isDockerAddr = (a) => /^172\.17\./.test(a);
+const privateV4 = (a) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a);
+// An address worth sharing: private, and not the default Docker bridge.
+const usablePrivate = (a) => privateV4(a) && !isDockerAddr(a);
+// 192.168.* first (home Wi-Fi), then 10.*, then 172.16-31.*; Docker's bridge last.
+const rankLanAddr = (a) => (/^192\.168\./.test(a) ? 0 : /^10\./.test(a) ? 1 : isDockerAddr(a) ? 9 : /^172\.(1[6-9]|2\d|3[01])\./.test(a) ? 2 : 5);
+
 // Best effort: a host ICE candidate reveals the local IPv4 on browsers that do not mask it with mDNS.
 // No STUN is configured, so this sends nothing.
 function probeLocalIPv4() {
@@ -396,8 +408,7 @@ function probeLocalIPv4() {
     const finish = () => {
       clearTimeout(timer);
       pc.close();
-      const rank = (a) => (/^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))/.test(a) ? 0 : 1);
-      resolve(found.sort((x, y) => rank(x) - rank(y))[0] || null);
+      resolve(found.filter(usablePrivate).sort((x, y) => rankLanAddr(x) - rankLanAddr(y))[0] || null);
     };
     const timer = setTimeout(finish, 1500);
     pc.createDataChannel('probe');
@@ -420,6 +431,7 @@ function resolveInviteBase(force = false) {
     if (manual) { inviteBase = manual + APP_DIR; return; }
     if (!isLoopbackHost(location.hostname)) return;
     try {
+      if (!SERVED_BY_SERVER) throw new Error('static host');
       const res = await fetch(new URL('lan.json', location.origin + APP_DIR), { cache: 'no-store' });
       const { addresses, port, protocol } = await res.json();
       if (addresses?.length) { inviteBase = `${protocol}//${addresses[0]}${port ? ':' + port : ''}${APP_DIR}`; return; }
@@ -517,23 +529,51 @@ const seenFailures = new WeakSet();
 let lanIp = null;
 const MDNS_HOST = /( \d+ (?:udp|tcp) \d+ )(\S+\.local)( \d+ typ host)/gi;
 const unhideSdp = (text) => (lanIp ? String(text).replace(MDNS_HOST, `$1${lanIp}$3`) : text);
-const PRIVATE_V4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
-
-async function resolveOwnLan() {
-  lanIp = null;
-  if (!settings.shareLan) return;
+// Where our own local address can come from: one you typed (on this machine), the server's /whoami (only
+// when it can be sure), or the browser itself (only once it has been allowed camera or microphone access).
+async function findOwnLan() {
   const manual = isLoopbackHost(location.hostname) ? (settings.inviteHost || '').replace(/^https?:\/\//, '').split(':')[0] : '';
-  if (PRIVATE_V4.test(manual)) { lanIp = manual; return; }
-  try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 1500);
-    const res = await fetch(new URL('whoami', location.origin + APP_DIR), { cache: 'no-store', signal: ctl.signal });
-    clearTimeout(t);
-    const { ip } = await res.json();
-    if (PRIVATE_V4.test(ip || '')) { lanIp = ip; return; }
-  } catch { /* not our server */ }
+  if (usablePrivate(manual)) return manual;
+  if (SERVED_BY_SERVER) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 1500);
+      const res = await fetch(new URL('whoami', location.origin + APP_DIR), { cache: 'no-store', signal: ctl.signal });
+      clearTimeout(t);
+      const { ip } = await res.json();
+      if (usablePrivate(ip || '')) return ip;
+    } catch { /* server did not answer */ }
+  }
   const probed = await probeLocalIPv4();
-  if (probed && PRIVATE_V4.test(probed)) lanIp = probed;
+  return probed && usablePrivate(probed) ? probed : null;
+}
+
+async function resolveOwnLan(force = false) {
+  if (!force && lanResolved) return lanIp;
+  lanResolved = true;
+  lanIp = settings.shareLan ? await findOwnLan() : null;
+  return lanIp;
+}
+let lanResolved = false;
+
+// A browser only reveals its local address after the page has been allowed camera or microphone access. When
+// that happens mid-call, pick the address up and nudge connections that were stuck without it.
+async function refreshOwnLan() {
+  if (!settings.shareLan || !S.room || S.left) return;
+  const before = lanIp;
+  const ip = await findOwnLan();
+  if (!ip || ip === before) return;
+  lanIp = ip;
+  log(`Now sharing your local network address (${ip}), so devices on the same network can connect.`);
+  for (const pc of [...allPCs]) {
+    if (pcClosed(pc)) continue;
+    try {
+      if (pc.connectionState !== 'connected') { pc.restartIce(); continue; }
+      let direct = false;
+      (await pc.getStats()).forEach((r) => { if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded' && /host/.test(`${r.localCandidateType}${r.remoteCandidateType}`)) direct = true; });
+      if (!direct) pc.restartIce();
+    } catch { /* closing */ }
+  }
 }
 
 let pcCounter = 0;
@@ -605,8 +645,10 @@ function failureDetail(pc) {
   const mdns = (l) => / typ host/.test(l) && l.split(' ')[4]?.endsWith('.local');
   const hidden = remote.some(mdns) && local.some(mdns);
   const parts = [`you offered ${summarizeCandidates(local)}; they offered ${summarizeCandidates(remote)}`];
-  if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
-  else if (hidden) parts.push('both browsers hid their local address behind a .local name, which browsers on one computer often cannot resolve. Fix: turn on Mic (or Camera) in both windows so each browser shows its real local address; the preview stays private until you press Send, and the connection retries by itself. Otherwise use two devices, or switch address hiding off for testing (Chrome: chrome://flags/#enable-webrtc-hide-local-ips-with-mdns; Firefox: media.peerconnection.ice.obfuscate_host_addresses = false; Safari: Develop > WebRTC > Disable ICE Candidate Restrictions)');
+  if (hidden) {
+    parts.push(`both browsers hid their local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Fix: turn on Mic (or Camera) in both windows and allow it. The browser then lets this page see your local address, the page shares it${settings.shareLan ? '' : ' (sharing is off in Network settings, so turn it on)'}, and the connection retries by itself. The preview stays private until you press Send`);
+    if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
+  } else if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
   else if (remoteOnlyLocal) parts.push('they offered only local-network addresses: either you are on different networks, or this network blocks devices from reaching each other (guest Wi-Fi, client isolation, VPN, firewall). A TURN server is the fix for different networks');
   return parts.join('. ');
 }
@@ -711,6 +753,9 @@ async function joinFlow() {
   await resolveOwnLan();
   if (lanIp) log(`Sharing your local network address (${lanIp}) so devices on the same network can connect even when the browser hides it.`);
   const iceServers = settings.lan ? [] : [{ urls: settings.stun || DEFAULT_STUN }];
+  // What is passed to the library, kept so it can be checked: the lists must always be explicit, because a missing
+  // one would let the library add its own relays or STUN servers.
+  S.egressConfig = { relayUrls: activeRelays(), iceServers: DEV.breakIce ? undefined : iceServers };
   const turnConfig = settings.turnUrl
     ? [{ urls: settings.turnUrl, username: settings.turnUser || undefined, credential: settings.turnCred || undefined }]
     : [];
@@ -726,8 +771,8 @@ async function joinFlow() {
     password,
     maxUsers: audioCap,
     identity: 'none',
-    relayConfig: { urls: activeRelays(), warnOnRelayFailure: false },
-    rtcConfig: { iceServers },
+    relayConfig: { urls: S.egressConfig.relayUrls, warnOnRelayFailure: false },
+    rtcConfig: { iceServers: S.egressConfig.iceServers },
     turnConfig,
     rtcPolyfill: TrackedPC,
   }, roomId);
@@ -765,6 +810,17 @@ async function joinFlow() {
   acquireWakeLock();
   $('#selLayout').value = settings.layout;
   render();
+}
+
+function egressConfigProblems() {
+  const c = S.egressConfig;
+  if (!c) return ['not joined yet'];
+  const out = [];
+  if (JSON.stringify(c.relayUrls) !== JSON.stringify(activeRelays())) out.push('the relay list passed to the library differs from the one shown');
+  if (!Array.isArray(c.iceServers)) out.push('iceServers is not an array, so the library would add its own STUN servers');
+  else if (settings.lan && c.iceServers.length) out.push('LAN only is on but ICE servers are set');
+  else if (!settings.lan && !(c.iceServers.length === 1 && c.iceServers[0].urls === (settings.stun || DEFAULT_STUN))) out.push('the ICE server list is not exactly the STUN server shown');
+  return out;
 }
 
 const hostOf = (u) => { try { return new URL(u.replace(/^turns?:/, 'http://')).host; } catch { return u; } };
@@ -973,7 +1029,9 @@ function mediaConstraints(kind, useSaved = true) {
 
 async function openDevice(kind) {
   try {
-    return await navigator.mediaDevices.getUserMedia(mediaConstraints(kind));
+    const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints(kind));
+    refreshOwnLan();
+    return stream;
   } catch (e) {
     const saved = kind === 'cam' ? settings.camId : settings.micId;
     if (saved && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) {
@@ -1384,7 +1442,7 @@ function noAnswerWatch() {
     for (let i = failures.length - 1; i >= 0; i--) if (failures[i].reason === 'no answer') failures.splice(i, 1);
     return;
   }
-  if (!othersAnnouncing()) { S.othersSince = null; return; }
+  if (!othersAnnouncing() || failures.some((f) => f.reason !== 'no answer')) { S.othersSince = null; return; } // a named ICE failure already explains it
   S.othersSince ??= Date.now();
   if (!S.noAnswerReported && Date.now() - S.othersSince > CONNECT_TIMEOUT_MS) {
     S.noAnswerReported = true;
@@ -2135,6 +2193,7 @@ async function listDevices() {
 }
 
 function onDeviceChange() {
+  refreshOwnLan();
   listDevices().then(() => log('A camera, microphone or speaker was added or removed.'));
 }
 
@@ -2192,6 +2251,7 @@ function stopMicTest() {
 async function startMicTest(meter) {
   stopMicTest();
   const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints('mic'));
+  refreshOwnLan();
   S.allTracks.add(stream.getAudioTracks()[0]);
   const ctx = audioCtx();
   const an = ctx.createAnalyser();
@@ -2687,6 +2747,8 @@ const COMMANDS = {
     lines.push('', 'Hosts OBSERVED this session (page requests, relay sockets, relay probes, ICE candidates):');
     for (const h of observed.keys()) lines.push(`  ${declared.has(h) ? '  ' : '⚠ '}${h.padEnd(32)} ${roles(observed, h)}`);
     if (!iceSeen) lines.push(settings.lan ? '  (LAN only: no STUN or TURN candidates, as expected)' : '  (no STUN/TURN candidate observed yet; connect or wait for the first connection attempt)');
+    const cfg = egressConfigProblems();
+    lines.push('', cfg.length ? `⚠ configuration check: ${cfg.join('; ')}` : '✓ configuration check: the relay list and ICE servers passed to the library are exactly the ones above.');
     lines.push('', unexpected.length ? `⚠ ${unexpected.length} observed host(s) are not in your settings: ${unexpected.join(', ')}` : '✓ every observed host is one you set.');
     log(lines.join('\n'), unexpected.length ? 'err' : '');
   },
@@ -2729,7 +2791,7 @@ function bootLanding() {
     box.textContent = `This page was loaded from ${location.protocol}//${location.host}, an insecure origin. Browsers block camera, microphone, screen capture and the cryptography this app needs there. Open it over https://, or over http://localhost on the same machine.`;
     $('#btnCreate').disabled = true; $('#btnJoin').disabled = true;
     // If this is our own server, it knows its secure port: offer the link instead of a dead end.
-    fetch(new URL('lan.json', location.origin + APP_DIR), { cache: 'no-store' }).then((r) => r.json()).then(({ httpsPort }) => {
+    if (SERVED_BY_SERVER) fetch(new URL('lan.json', location.origin + APP_DIR), { cache: 'no-store' }).then((r) => r.json()).then(({ httpsPort }) => {
       if (!httpsPort) return;
       const url = `https://${location.hostname}:${httpsPort}${APP_DIR}${location.hash}`;
       box.append(' ', el('a', { href: url, text: 'Open the secure version of this page' }), ' (the certificate is self-signed, so your browser warns once: choose Advanced, then Proceed).');
@@ -2785,13 +2847,23 @@ function bootLanding() {
     settings.name = nameIn.value.trim().slice(0, 24);
     saveSettings();
     if (localStorage.getItem(IP_NOTICE_KEY)) { startJoin(); return; }
-    showScreen({
-      title: 'Before you join',
-      body: [
-        'Others in the room can see your IP address. The introduction servers see it too. On the same network they also get your local network address (you can turn that off under Network settings).',
-        'This is the price of connecting peer-to-peer. If that is a problem, do not join, or use a VPN you trust.',
-      ],
-      actions: [{ label: 'Join anyway', cls: 'primary', fn: () => { localStorage.setItem(IP_NOTICE_KEY, '1'); startJoin(); } }, { label: 'Cancel' }],
+    // Show the address that would be shared, so a wrong one is visible before anything is sent.
+    resolveOwnLan(true).then(() => {
+      const earlier = IP_NOTICE_OLD_KEYS.some((k) => localStorage.getItem(k));
+      const body = [];
+      if (earlier) body.push('New: on the same network, people in the room now also get your local network address. This notice changed, so you are seeing it again.');
+      body.push('Others in the room can see your IP address. The introduction servers see it too.');
+      body.push(!settings.shareLan
+        ? 'Sharing your local network address is off, so people on the same network may fail to connect when the browser hides it.'
+        : lanIp
+          ? `On the same network they also get your local network address (${lanIp}). If that looks wrong, turn sharing off under Network settings.`
+          : 'On the same network they also get your local network address when the browser lets this page know it (you can turn that off under Network settings).');
+      body.push('This is the price of connecting peer-to-peer. If that is a problem, do not join, or use a VPN you trust.');
+      showScreen({
+        title: 'Before you join',
+        body,
+        actions: [{ label: 'Join anyway', cls: 'primary', fn: () => { localStorage.setItem(IP_NOTICE_KEY, '1'); startJoin(); } }, { label: 'Cancel' }],
+      });
     });
   };
 
@@ -2844,7 +2916,7 @@ bootLanding();
 // Read-only handle for tests and DevTools.
 window.rtc = {
   version: VERSION, protocol: PROTOCOL, S, chooseLevel, rosterRows, allTracksEnded,
-  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
+  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, egressConfigProblems, activeRelays, rankLanAddr, usablePrivate, getLanIp: () => lanIp, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
 };
 </script>
 </body>
