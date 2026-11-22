@@ -155,6 +155,7 @@
 
     <details>
       <summary>Network settings</summary>
+      <label class="chk"><input type="checkbox" id="setShareLan"> Share my local network address with people in the room, so devices on the same network connect even when the browser hides it (they already see your public IP)</label>
       <label class="chk"><input type="checkbox" id="setLan"> LAN only — don't contact the STUN server (peers on the same network only)</label>
       <label for="setStun">STUN server</label>
       <input id="setStun" type="text" autocomplete="off">
@@ -436,7 +437,7 @@ const inviteUrl = (secret, h = parseHostHash()) => inviteBase + '#k=' + b64u.enc
 const settings = (() => {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
-  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', camId: '', micId: '', spkId: '', mirror: true, sounds: true, layout: 'grid', ...s };
+  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', camId: '', micId: '', spkId: '', mirror: true, sounds: true, layout: 'grid', shareLan: true, ...s };
 })();
 const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 // ws:// would put the room topic and your IP on the network in plaintext, so it is accepted for loopback only.
@@ -508,6 +509,32 @@ const allPCs = new Set();
 const failures = [];
 const seenFailures = new WeakSet();
 
+// Browsers replace a device's local address with a random name ending in .local, and another device on the
+// same network often cannot resolve it (or the router blocks it). When we know our own local address, put it
+// back in the candidates we send, so same-network connections work without mDNS. Public addresses and
+// everything else are untouched. Anyone in the room already sees your public address; this adds the private one.
+let lanIp = null;
+const MDNS_HOST = /( \d+ (?:udp|tcp) \d+ )(\S+\.local)( \d+ typ host)/gi;
+const unhideSdp = (text) => (lanIp ? String(text).replace(MDNS_HOST, `$1${lanIp}$3`) : text);
+const PRIVATE_V4 = /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+
+async function resolveOwnLan() {
+  lanIp = null;
+  if (!settings.shareLan) return;
+  const manual = isLoopbackHost(location.hostname) ? (settings.inviteHost || '').replace(/^https?:\/\//, '').split(':')[0] : '';
+  if (PRIVATE_V4.test(manual)) { lanIp = manual; return; }
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 1500);
+    const res = await fetch(new URL('whoami', location.origin + APP_DIR), { cache: 'no-store', signal: ctl.signal });
+    clearTimeout(t);
+    const { ip } = await res.json();
+    if (PRIVATE_V4.test(ip || '')) { lanIp = ip; return; }
+  } catch { /* not our server */ }
+  const probed = await probeLocalIPv4();
+  if (probed && PRIVATE_V4.test(probed)) lanIp = probed;
+}
+
 let pcCounter = 0;
 const pcClosed = (pc) => pc.connectionState === 'closed' || pc.signalingState === 'closed';
 class TrackedPC extends RTCPeerConnection {
@@ -525,6 +552,20 @@ class TrackedPC extends RTCPeerConnection {
       if (this.connectionState === 'failed') noteFailure(this);
       scheduleRender();
     });
+  }
+  get localDescription() {
+    const d = super.localDescription;
+    return d && lanIp ? { type: d.type, sdp: unhideSdp(d.sdp) } : d;
+  }
+  get onicecandidate() { return super.onicecandidate; }
+  set onicecandidate(fn) {
+    super.onicecandidate = typeof fn === 'function' ? (e) => {
+      const c = e.candidate;
+      const line = c && lanIp ? unhideSdp(c.candidate) : null;
+      if (!line || line === c.candidate) return fn(e);
+      const json = { ...c.toJSON(), candidate: line };
+      return fn({ candidate: { ...json, toJSON: () => json }, target: e.target });
+    } : fn;
   }
   close() {
     allPCs.delete(this); // close() fires no connectionstatechange, so the registry must be pruned here
@@ -666,6 +707,8 @@ async function joinFlow() {
   S.roomId = roomId;
   S.lib = await loadVerified('trystero-nostr.js');
 
+  await resolveOwnLan();
+  if (lanIp) log(`Sharing your local network address (${lanIp}) so devices on the same network can connect even when the browser hides it.`);
   const iceServers = settings.lan ? [] : [{ urls: settings.stun || DEFAULT_STUN }];
   const turnConfig = settings.turnUrl
     ? [{ urls: settings.turnUrl, username: settings.turnUser || undefined, credential: settings.turnCred || undefined }]
@@ -2485,6 +2528,7 @@ const COMMANDS = {
       '/invite | /qr     copy the invite link / show its QR code',
       '/invitehost <host:port>|auto   set the LAN address used in invite links',
       '/lan on|off       LAN only (no STUN) — applies on next join',
+      '/shareaddr on|off share your local network address so same-network devices connect (default on)',
       '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
       '/relays           introduction servers: probe result and room socket for each',
       '/egress           hosts you SET to contact vs hosts OBSERVED this session (⚠ on a mismatch)',
@@ -2585,6 +2629,11 @@ const COMMANDS = {
     await resolveInviteBase(true);
     log(`Invite links now use ${inviteBase}`);
   },
+  shareaddr(args) {
+    if (!['on', 'off'].includes(args[0])) { log(`Sharing your local network address is ${settings.shareLan ? 'on' : 'off'}${lanIp ? ` (${lanIp})` : ''}. Usage: /shareaddr on|off (applies on next join)`); return; }
+    settings.shareLan = args[0] === 'on'; saveSettings();
+    log(`Sharing your local network address ${args[0]}. Takes effect the next time you join a room.`);
+  },
   lan(args) {
     if (!['on', 'off'].includes(args[0])) { log(`LAN only is ${settings.lan ? 'on' : 'off'}. Usage: /lan on|off (applies on next join)`); return; }
     settings.lan = args[0] === 'on'; saveSettings();
@@ -2664,6 +2713,7 @@ function bootLanding() {
   const nameIn = $('#name');
   nameIn.value = settings.name;
   $('#setLan').checked = settings.lan;
+  $('#setShareLan').checked = settings.shareLan;
   $('#setStun').value = settings.stun;
   $('#setTurn').value = settings.turnUrl;
   $('#setTurnUser').value = settings.turnUser;
@@ -2677,6 +2727,12 @@ function bootLanding() {
     box.classList.remove('hidden');
     box.textContent = `This page was loaded from ${location.protocol}//${location.host}, an insecure origin. Browsers block camera, microphone, screen capture and the cryptography this app needs there. Open it over https://, or over http://localhost on the same machine.`;
     $('#btnCreate').disabled = true; $('#btnJoin').disabled = true;
+    // If this is our own server, it knows its secure port: offer the link instead of a dead end.
+    fetch(new URL('lan.json', location.origin + APP_DIR), { cache: 'no-store' }).then((r) => r.json()).then(({ httpsPort }) => {
+      if (!httpsPort) return;
+      const url = `https://${location.hostname}:${httpsPort}${APP_DIR}${location.hash}`;
+      box.append(' ', el('a', { href: url, text: 'Open the secure version of this page' }), ' (the certificate is self-signed, so your browser warns once: choose Advanced, then Proceed).');
+    }).catch(() => {});
     return;
   }
 
@@ -2708,6 +2764,7 @@ function bootLanding() {
   };
   $('#btnSaveSettings').onclick = () => {
     settings.lan = $('#setLan').checked;
+    settings.shareLan = $('#setShareLan').checked;
     settings.stun = $('#setStun').value.trim() || DEFAULT_STUN;
     settings.turnUrl = $('#setTurn').value.trim();
     settings.turnUser = $('#setTurnUser').value;
@@ -2730,7 +2787,7 @@ function bootLanding() {
     showScreen({
       title: 'Before you join',
       body: [
-        'Others in the room can see your IP address. The introduction servers see it too.',
+        'Others in the room can see your IP address. The introduction servers see it too. On the same network they also get your local network address (you can turn that off under Network settings).',
         'This is the price of connecting peer-to-peer. If that is a problem, do not join, or use a VPN you trust.',
       ],
       actions: [{ label: 'Join anyway', cls: 'primary', fn: () => { localStorage.setItem(IP_NOTICE_KEY, '1'); startJoin(); } }, { label: 'Cancel' }],

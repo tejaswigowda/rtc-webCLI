@@ -73,9 +73,11 @@ There is no `run=` agent surface and no `window.__webcli_result` yet.
 
 - **Stays Connected**: the screen is kept awake during a call where the browser allows it. If the link to someone drops, the page says "Reconnecting…", the library re-dials by itself, and your camera and microphone resume without any action (tested). If you go offline, the page says so
 
+- **Same-Network Connections**: browsers hide each device's local address behind a `.local` name that other devices often cannot resolve. The page puts your real local address back into what it sends to peers, so people on the same Wi-Fi connect directly. This is on by default, disclosed before you first join, and can be turned off (`/shareaddr off`)
+
 - **Visible Network Settings**: STUN is named and can be turned off ("LAN only"). TURN is never built in; you can add your own, and the path then shows **relay** and names the host
 
-- **Console With GUI Parity**: `/peers`, `/path`, `/stats <peer>` (raw `getStats()`), `/cap`, `/mic`, `/mute`, `/cam`, `/share`, `/send`, `/cancel`, `/chat`, `/dm`, `/record`, `/hand`, `/react`, `/layout`, `/pin`, `/fullscreen`, `/devices`, `/flip`, `/sounds`, `/res`, `/remove`, `/move`, `/invite`, `/qr`, `/lan`, `/turn`, `/relays`, `/egress`, `/about`, `/leave`. Each is a button or setting in the GUI, and the other way round
+- **Console With GUI Parity**: `/peers`, `/path`, `/stats <peer>` (raw `getStats()`), `/cap`, `/mic`, `/mute`, `/cam`, `/share`, `/send`, `/cancel`, `/chat`, `/dm`, `/record`, `/hand`, `/react`, `/layout`, `/pin`, `/fullscreen`, `/devices`, `/flip`, `/sounds`, `/shareaddr`, `/res`, `/remove`, `/move`, `/invite`, `/qr`, `/lan`, `/turn`, `/relays`, `/egress`, `/about`, `/leave`. Each is a button or setting in the GUI, and the other way round
 
 - **Verified Library**: Trystero and the QR generator are vendored in `docs/lib/`. The page checks each file's SHA-256 against the value pinned in `docs/index.html` and refuses to run on a mismatch
 
@@ -188,6 +190,7 @@ The five relays are the first five of Trystero 0.27.0's default list for this ap
 - **Introduction relays:** your IP address, a hash of the room topic and encrypted connection data. Not the secret, not your media. **A relay can see which IP addresses meet in the same room, and when**: every event carries the room's topic hash, which stays the same for the life of the room, and announcements repeat about once a minute.
 - **Retention:** signaling uses ephemeral Nostr event kinds (20000–29999), which relays are not supposed to store. We cannot verify that each relay complies.
 - **The STUN server:** your IP address, unless LAN only is on.
+- **People in the room, on the same network:** your private network address, unless you turn sharing off. They already see your public address.
 - **The page host:** that you loaded the page. Never the secret, which is in the URL fragment. The host does serve `index.html`, so it could serve a different page. Hash pinning catches the libraries drifting from what was reviewed; it does not protect you from a malicious host.
 
 **Verification in DevTools**
@@ -214,23 +217,22 @@ The five relays are the first five of Trystero 0.27.0's default list for this ap
 git clone https://github.com/tejaswigowda/rtc-webCLI.git
 cd rtc-webCLI
 npm install        # dev dependencies only; the app has no runtime dependencies
-npm start          # http://localhost:8080/
+npm start          # http://localhost:8080/  and  https://<your LAN address>:8443/
 ```
 
-The server listens on all interfaces and prints your network address. When the page is opened on `localhost`, **Copy invite** and **QR** use that LAN address (from `/lan.json`) instead of `127.0.0.1`, so other devices can open them.
+The server listens on all interfaces and prints your network address. It also serves **https on port 8443 with a self-signed certificate** (made on first start in `.certs/`, covering `localhost` and your LAN addresses, remade if your address changes). Browsers only give camera, microphone and the crypto this app needs to `https://` or `localhost`, so other devices must use the https address. Each device warns about the certificate once: Chrome/Edge/Firefox choose Advanced, then Proceed; iPhone Safari choose Show Details, then visit this website.
+
+When the page is opened on `localhost`, **Copy invite** and **QR** use the https LAN address (from `/lan.json`) instead of `127.0.0.1`, so other devices can open them. If someone opens the plain `http://<LAN IP>:8080` address instead, the page explains why it is blocked and links to the same invite on the https address. `NO_HTTPS=1` turns https off; `TLS_KEY` and `TLS_CERT` use your own certificate; `HTTPS_PORT` changes the port.
 
 **Other static servers (VS Code Live Server, `python -m http.server`, ...)** work too, including when you open `http://127.0.0.1:5500/docs`. They cannot report your LAN address, so the page tries to detect it from the browser. Many browsers hide it, in which case the **QR** dialog asks for it (for example `192.168.0.5:5500`). You can also set it under **Network settings** or with `/invitehost <host:port>`.
 
-Camera, microphone, screen capture and the cryptography need `https://` or `http://localhost`. Over plain `http://<LAN IP>` the page explains this instead of failing with a permission error. For a working LAN session serve https:
+**VS Code Live Server over https:** run `npm run cert`. It writes the same certificate and prints the `liveServer.settings.https` JSON to paste into your VS Code settings. Restart Live Server, then open the `https://` address it shows.
 
-```bash
-openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=rtc-webCLI" -keyout key.pem -out cert.pem
-TLS_KEY=key.pem TLS_CERT=cert.pem npm start     # each device accepts the self-signed certificate once
-```
+Camera, microphone, screen capture and the cryptography need `https://` or `http://localhost`. Over plain `http://<LAN IP>` the page explains this instead of failing with a permission error.
 
 ### Troubleshooting: "Couldn't reach X directly"
 
-**Known issue: same Wi-Fi.** In the first real-device test, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. It is not yet known why. Try, in order: press **Mic** in both windows (see the first cause below); turn address hiding off on the laptop; check the router for client or AP isolation. If you see this, the console line with both sides' address kinds is the useful report.
+**Same Wi-Fi, but they do not connect.** In the first real-device test, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. The likely cause, and what was done about it: both browsers hide their local address behind a random `.local` name, and when the other device cannot resolve it, the only path left is through the router's public address, which most home routers do not loop back. With the phone on cellular that second path is a normal internet route, which is why it worked. **The page now puts your real local address back into the candidates it sends** (`/whoami` on the server, or the browser's own view), so same-network devices connect without needing the `.local` name to resolve. This is on by default and can be turned off under Network settings or with `/shareaddr off`; people in the room then see your private network address in addition to your public one. Tested with two default-settings Chromium windows that failed before the change; **not yet re-tested on a phone**. If it still fails, the router is probably blocking devices from reaching each other (client or AP isolation, common on guest Wi-Fi): turn that off, or add your own TURN server. The console line with both sides' address kinds is the useful report.
 
 The roster entry (and console line) lists the kinds of addresses each side offered. The usual causes:
 
@@ -290,6 +292,7 @@ npx playwright install chromium    # first time only
 | RT25 | IP disclosure before first join | built; review open |
 | RT26 | incompatible versions refused by name | `npm test` |
 | Devices and layout | device lists, switching the camera while live (track swapped on every connection, roster still complete), mirror toggle, permission-error help, speaker highlight with fake microphones, pin and unpin, speaker layout, hand, reactions, timer, offline banner, reconnect after a dropped link | `npm test`; **speakers, phones, flip camera, wake lock and full screen are not tested** |
+| Same network | two default-settings windows connect with addresses hidden and no mic preview; the server serves https and a plain-http LAN visit links to it | `npm test`; **phones and real routers not yet tested** |
 | Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
 | Recording | creator-only button; a non-creator is refused; everyone is told and told again when it stops; a claim from a non-creator is ignored; the saved file is non-empty | `npm test`; **late-joiner notice and long-recording memory use not yet tested** |
 
@@ -331,8 +334,9 @@ docs/
     ├── qrcode.js           # Vendored QR generator, hash-pinned
     └── PINS.json           # Versions and SHA-256 values
 
-server.js                   # Node.js static dev server (+ /lan.json, optional https)
+server.js                   # Node.js static dev server (+ /lan.json, /whoami, self-signed https)
 scripts/vendor.mjs          # Bundles docs/lib/ and pins hashes into docs/index.html
+scripts/cert.mjs            # Self-signed certificate for the LAN (also `npm run cert`)
 test/
 ├── e2e.mjs                 # End-to-end gates
 └── mock-relay.mjs          # In-process Nostr relay for the tests (normal, drop, reject, oneway; optional delay)

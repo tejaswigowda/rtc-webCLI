@@ -25,9 +25,10 @@ const until = async (fn, ms = 30000, step = 250) => {
   }
 };
 
-const server = spawn('node', ['server.js'], { env: { ...process.env, PORT: String(PORT) }, stdio: 'inherit' });
+const HTTPS_PORT = PORT + 1000;
+const server = spawn('node', ['server.js'], { env: { ...process.env, PORT: String(PORT), HTTPS_PORT: String(HTTPS_PORT) }, stdio: 'inherit' });
 const relay = await startMockRelay();
-await until(async () => (await fetch(ORIGIN)).ok, 10000);
+await until(async () => (await fetch(ORIGIN)).ok, 20000);
 
 const browser = await chromium.launch({
   args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream=device-count=2', '--disable-features=WebRtcHideLocalIpsWithMdns'],
@@ -242,6 +243,45 @@ try {
   await A.evaluate((id) => { window.rtc.S.room.getPeers()[id].connection.close(); }, bTile);
   const recovered = await until(() => A.evaluate((id) => { const p = window.rtc.S.peers.get(id); return !!p && p.hello && window.rtc.S.sent.cam.has(id) && window.rtc.rt4Check().ok; }, bTile), 90000);
   check('after the link to a peer drops, it reconnects by itself and your camera resumes', recovered);
+
+  // --- LAN: secure origin for other devices ---------------------------------------------------------
+  const lanInfo = await (await fetch(`${ORIGIN}/lan.json`)).json();
+  check('server offers https for the LAN and says so in /lan.json', lanInfo.protocol === 'https:' && lanInfo.httpsPort === HTTPS_PORT && lanInfo.port === HTTPS_PORT, JSON.stringify(lanInfo));
+  const lanIp = lanInfo.addresses[0];
+  if (lanIp) {
+    const sctx = await browser.newContext({ ignoreHTTPSErrors: true });
+    const sp = await sctx.newPage();
+    await sp.goto(`https://${lanIp}:${HTTPS_PORT}/`);
+    const secure = await sp.evaluate(() => window.isSecureContext && !!crypto.subtle);
+    await sp.click('#btnCreate');
+    const lanLink = await until(async () => { const t = await sp.textContent('#landingInvite'); return /#k=/.test(t) && t; }, 10000);
+    check('opening the LAN address over https is a secure origin and shares an https LAN invite', secure && lanLink.startsWith(`https://${lanIp}:${HTTPS_PORT}/`), lanLink);
+    await sctx.close();
+    const ictx = await browser.newContext();
+    const ip = await ictx.newPage();
+    await ip.goto(`http://${lanIp}:${PORT}/#k=${'L'.repeat(22)}`);
+    const secureLink = await until(async () => ip.getAttribute('#insecure a', 'href'), 10000);
+    check('opening the LAN address over plain http explains why and links to the https version, keeping the invite', !!secureLink && secureLink === `https://${lanIp}:${HTTPS_PORT}/#k=${'L'.repeat(22)}`, secureLink || 'no link');
+    await ictx.close();
+  } else check('LAN checks skipped (no LAN address on this machine)', true);
+
+  // --- Same network, addresses hidden, no mic preview: the local address is shared so they connect ------------
+  const maskedBrowser = await chromium.launch(); // default flags: local addresses hidden behind .local names
+  const sameNetUrl = ORIGIN + '/#k=' + 'G'.repeat(22);
+  const sn = [];
+  for (const [n, share] of [['Gus', true], ['Gia', true]]) {
+    const ctx = await maskedBrowser.newContext();
+    await ctx.addInitScript(({ relays, n, share }) => {
+      localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: false, relays, shareLan: share }));
+      localStorage.setItem('rtc.ipNoticeSeen', '1');
+    }, { relays: relay.url, n, share });
+    const pg = await ctx.newPage();
+    await pg.goto(sameNetUrl); await join(pg);
+    sn.push(pg);
+  }
+  const joined = (await connectedReady(sn[0], 1)) && (await connectedReady(sn[1], 1));
+  check('hidden .local addresses: two windows connect with no mic preview, because the local address is shared', joined, (await sn[0].textContent('#consoleOut')).match(/Sharing your local network address \(\S+\)/)?.[0] || 'no address shared');
+  await maskedBrowser.close();
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
