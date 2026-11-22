@@ -10,7 +10,7 @@ A browser-based room for audio, video and screen share, opened with an invite li
 
 > Part of the **webCLI** family of browser tools. Same look and feel, same discipline about what leaves your device, with one difference stated up front: **a call has to send**. Your media goes to the other people in the room, and the introduction relays and a STUN server are contacted to set that up. Every host is listed in the [egress table](#privacy--egress), and nothing is claimed beyond it.
 
-**Status: v0.2.0 (protocol 2), not yet validated on real devices.** Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. Measurement and device-matrix gates are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
+**Status: v0.2.0 (protocol 2), first real-device runs on 2026-11-21: two pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
 ---
 
@@ -81,7 +81,7 @@ There is no `run=` agent surface and no `window.__webcli_result` yet.
 |---|---|
 | **A quick call with a few people** | Make a room, send the link. No account, nothing to install |
 | **You want your media off someone else's servers** | Audio, video and screen go between the participants. No media server of ours exists |
-| **A workshop or session on a known network** | LAN-only mode skips even the STUN server |
+| **A workshop or session on a known network** | **Not yet working in testing.** Phone and laptop on the same home Wi-Fi did not connect (2026-11-21); the cause is not diagnosed. Over the open internet the same pair connected. Until this is fixed, phones can use cellular. LAN-only mode is untested across devices |
 
 **The tradeoff:** every person uploads their video once per other person, so rooms stay small, and anything larger needs a server that relays media, which this tool deliberately has none of. There is no host who can lock or remove anyone: anyone with the link is a peer. The room creator can be proved and is the only one offered recording, but that does not give them lock or remove powers. Rooms exist only while someone is in them.
 
@@ -219,6 +219,8 @@ TLS_KEY=key.pem TLS_CERT=cert.pem npm start     # each device accepts the self-s
 
 ### Troubleshooting: "Couldn't reach X directly"
 
+**Known issue: same Wi-Fi.** In the first real-device test, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. It is not yet known why. Try, in order: press **Mic** in both windows (see the first cause below); turn address hiding off on the laptop; check the router for client or AP isolation. If you see this, the console line with both sides' address kinds is the useful report.
+
 The roster entry (and console line) lists the kinds of addresses each side offered. The usual causes:
 
 - **Hidden local addresses (`.local` names).** Browsers hide their local address behind a random `.local` name until the page has an active camera or microphone, and two browsers on one computer often cannot resolve each other's. Fix: press **Mic** (or **Camera**) in both windows. The preview stays private until you press **Send**, each browser then shows its real local address, and the connection retries by itself. (Checked with two Chromium windows on one machine: they fail by default and connect once both previews are on.) Alternatives: use two devices, or turn address hiding off for testing: Chrome `chrome://flags/#enable-webrtc-hide-local-ips-with-mdns` set to Disabled, Firefox `media.peerconnection.ice.obfuscate_host_addresses` set to `false`, Safari Develop → WebRTC → Disable ICE Candidate Restrictions.
@@ -271,7 +273,7 @@ npx playwright install chromium    # first time only
 | RT19 | console parity | `npm test` for core commands; `/turn` credentials are redacted from the echo (RF12) |
 | RT20 | non-secure origin explained | built; **manual check on a LAN IP open** |
 | RT21 | leaving ends every track | `npm test`; manual camera-light check open |
-| RT22 | browser-pair matrix | **open** (table below) |
+| RT22 | browser-pair matrix | **open**: 2 runs pass, 1 fails (table below) |
 | RT23 | README makes only the claims in the work order's §4 | review, line by line (this file) |
 | RT24 | names labelled unverified | `npm test` |
 | RT25 | IP disclosure before first join | built; review open |
@@ -287,7 +289,15 @@ npx playwright install chromium    # first time only
 
 **RT22 browser-pair matrix (open)**
 
-Chrome, Firefox, Safari on macOS, iOS Safari and Android Chrome, every pair, audio and video both ways. Not yet run. Any failing pair will be listed here.
+Chrome, Firefox, Safari on macOS, iOS Safari and Android Chrome, every pair, audio and video both ways. Runs so far, all on v0.2.0 against the live site and the real public relays:
+
+| Date | Pair | Network | What was exercised | Result | Path shown |
+|---|---|---|---|---|---|
+| 2026-11-21 | Chrome (macOS) ↔ Chrome Incognito (same machine) | one machine | signaling, data channel, chat; **no media** | pass | direct (local network) |
+| 2026-11-21 | Android Chrome ↔ Chrome (macOS), 3 people | phone on **cellular**, laptop on home Wi-Fi | video both ways, audio (muted) | pass | direct, via STUN |
+| 2026-11-21 | Android Chrome ↔ Chrome (macOS) | **both on the same home Wi-Fi** | joining | **fail**: did not connect. Message shown on the phone: **not recorded**. Cause: **not diagnosed** (hidden `.local` addresses, or the router not looping traffic back, or client isolation) | none |
+
+Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them. Any failing pair is listed here.
 
 **Known gaps in the automated tests**
 
