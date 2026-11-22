@@ -2,13 +2,13 @@
 
 [![GitHub stars](https://img.shields.io/github/stars/tejaswigowda/rtc-webCLI?style=social)](https://github.com/tejaswigowda/rtc-webCLI/stargazers)
 
-A browser-based room for audio, video and screen share, opened with an invite link. **Link in, live call out.** <b><ins>No accounts, and no media server of ours. Audio, video and screen go directly between participants</ins></b>, encrypted, using WebRTC and [Trystero](https://github.com/dmotz/trystero) for introductions.
+A browser-based room for audio, video and screen share, opened with an invite link. **Link in, live call out.** <b><ins>No accounts, and no media server of ours. Audio, video and screen go directly between participants</ins></b> (unless you add your own TURN server), encrypted, using WebRTC and [Trystero](https://github.com/dmotz/trystero) for introductions.
 
 ▶ **Live app:** https://tejaswigowda.com/rtc-webCLI/
 
 > Part of the **webCLI** family of browser tools. Same look and feel, same discipline about what leaves your device, with one difference stated up front: **a call has to send**. Your media goes to the other people in the room, and the introduction relays and a STUN server are contacted to set that up. Every host is listed in the [egress table](#privacy--egress), and nothing is claimed beyond it.
 
-**Status: v0.1.0, not yet validated on real devices.** Checks that code can make are automated (`npm test`). Measurement and device-matrix gates are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
+**Status: v0.2.0 (protocol 2), not yet validated on real devices.** Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. Measurement and device-matrix gates are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
 ---
 
@@ -30,7 +30,7 @@ The paper defines the four properties (fidelity, progressive disclosure, offline
 |---|---|
 | **in** | an invite link (or create a room), plus your camera, microphone or screen if you choose to share them |
 | **out** | a live peer-to-peer call; no file or artifact |
-| **not** | a hosted meeting service. No server relays media, so there is no host, no recording, no waiting room and no large rooms |
+| **not** | a hosted meeting service. No server relays media, so there is no enforceable host, no cloud recording, no waiting room and no large rooms |
 | **egress** | your media: only to the people in the room. Setup: the introduction relays and STUN server listed below |
 | **fetches** | code: none from a CDN (self-hosted, hash-pinned); relays and STUN per the egress table |
 | **repro** | not applicable |
@@ -41,27 +41,31 @@ There is no `run=` agent surface and no `window.__webcli_result` yet.
 
 ## Key Features
 
-- **Invite-Link Rooms**: `https://<origin>/#k=<128-bit secret>`. The secret lives after the `#`, which browsers never send to a server. A new room is a new secret; there is no other room identity
+- **Invite-Link Rooms**: `https://<origin>/#k=<128-bit secret>&h=<creator hash>`. Everything lives after the `#`, which browsers never send to a server. A new room is a new secret; there is no other room identity
 
 - **Audio, Video and Screen Share**: one WebRTC connection per other person (a mesh), encrypted with DTLS-SRTP. No account
 
 - **Media-Off Join**: camera and microphone stay off until you turn them on, and each starts with a local preview that nobody can see until you press Send
 
-- **A Roster You Can Trust**: every connection that can receive your media is listed, with what it receives (video, audio, screen). The roster is checked against the real connections on every render, and the top bar shows the result
+- **A Roster You Can Trust**: every connection that carries your media is listed, with what it receives (video, audio, screen, or "unlabelled media"). Membership follows live senders, not connection state, so a connection that is only "disconnected" for a moment stays listed. The top bar shows a check that is made independently of how the roster is built: it reads the rendered roster back and fails if any receiving connection, or any kind of media it receives, is missing
 
-- **Loud Failures**: if a pair of people cannot connect within 15 seconds, the roster names it and the reason class (no candidates, ICE failed, DTLS failed). No endless spinner
+- **Loud Failures**: if a pair of people cannot connect within 15 seconds, the roster names it and the reason class (no candidates, ICE failed, DTLS failed). If someone announces themselves in the room but no answer ever arrives, that is named too ("no answer"). No endless spinner
 
-- **Empty vs. Broken**: "No one else is here yet" and "Can't reach the introduction servers" are different messages, so nobody waits forever on a dead relay
+- **Empty vs. Broken**: "No one else is here yet", "Someone is trying to connect…", "The introduction servers are connected but not passing messages" and "Can't reach the introduction servers" are four different messages, so nobody waits forever on a dead relay. "Reachable" means a relay returned a test event, not merely that a socket opened
 
-- **Hard Caps With Refusal**: a room has a person limit and a video limit. The person who would exceed it gets a screen naming the cap and the reason. The caps are provisional and **not yet measured**
+- **Hard Caps With Refusal**: a room has a person limit and a video limit. The person who would exceed it gets a screen naming the cap and the reason, and is disconnected from everyone, never half-admitted. Video seats go to the first people to join, even with their camera off. The caps are provisional and **not yet measured**
 
-- **Honest Quality**: when your uplink is short, the page lowers your send resolution and says so ("Sending 360p to 4 people")
+- **Honest Quality**: when your uplink is short, the page lowers your send resolution and says so, separately for the camera and a screen share ("Sending 360p to 4 people. Sharing screen at 540p to 4 people"). The uplink figure is an estimate, and is labelled as one
 
-- **Honest Removal**: "Ask everyone to disconnect X" is a request that peers may ignore. **Move room** (new secret, chosen people re-invited over the encrypted connection) is the only real removal
+- **Honest Removal**: "Ask everyone to disconnect X" asks each person, who can **Disconnect** or **Ignore**; nothing happens to you unless you agree. Anyone in the room can send that request, and a removed person can simply reconnect: in testing the library re-dialled a closed pair within about ten seconds. When that happens the roster says "reconnected after a request to disconnect them" and the request is not re-applied. **Move room** (new secret, chosen people re-invited over the encrypted connection) is the only real removal
+
+- **Chat**: a Chat tab beside the roster, in the style of a meeting chat: messages to everyone or a direct message to one person, sender and time on each message, an unread count on the tab. Messages stay in memory only, so people who join later do not see earlier ones. Names are self-asserted; the room creator is marked, because that can be proved
+
+- **Recording, creator only**: whoever created the room (the browser holding the key behind the invite) gets a **Record** button; nobody else does. The recording is made in that browser and saved to that device, including everyone's video, audio and shared screens as the creator sees them. Chat is not recorded. Before it starts the creator confirms what is captured. Everyone else is told in their own window: a banner for as long as it runs, a notice with **Stay** or **Leave** when it starts (also for people who join late), a tag in the roster, and a message in the chat. Peers accept a "recording" message only from the peer that proved it is the creator
 
 - **Visible Network Settings**: STUN is named and can be turned off ("LAN only"). TURN is never built in; you can add your own, and the path then shows **relay** and names the host
 
-- **Console With GUI Parity**: `/peers`, `/path`, `/stats <peer>` (raw `getStats()`), `/cap`, `/mic`, `/mute`, `/cam`, `/share`, `/send`, `/cancel`, `/res`, `/remove`, `/move`, `/invite`, `/qr`, `/lan`, `/turn`, `/relays`, `/egress`, `/about`, `/leave`. Each is a button or setting in the GUI, and the other way round
+- **Console With GUI Parity**: `/peers`, `/path`, `/stats <peer>` (raw `getStats()`), `/cap`, `/mic`, `/mute`, `/cam`, `/share`, `/send`, `/cancel`, `/chat`, `/dm`, `/record`, `/res`, `/remove`, `/move`, `/invite`, `/qr`, `/lan`, `/turn`, `/relays`, `/egress`, `/about`, `/leave`. Each is a button or setting in the GUI, and the other way round
 
 - **Verified Library**: Trystero and the QR generator are vendored in `docs/lib/`. The page checks each file's SHA-256 against the value pinned in `docs/index.html` and refuses to run on a mismatch
 
@@ -77,7 +81,7 @@ There is no `run=` agent surface and no `window.__webcli_result` yet.
 | **You want your media off someone else's servers** | Audio, video and screen go between the participants. No media server of ours exists |
 | **A workshop or session on a known network** | LAN-only mode skips even the STUN server |
 
-**The tradeoff:** every person uploads their video once per other person, so rooms stay small, and anything larger needs a server that relays media, which this tool deliberately has none of. There is no host who can lock or remove anyone: anyone with the link is a peer. Rooms exist only while someone is in them.
+**The tradeoff:** every person uploads their video once per other person, so rooms stay small, and anything larger needs a server that relays media, which this tool deliberately has none of. There is no host who can lock or remove anyone: anyone with the link is a peer. The room creator can be proved and is the only one offered recording, but that does not give them lock or remove powers. Rooms exist only while someone is in them.
 
 **The privacy difference, and its limits:** media does not pass through a server of ours. But people in the room see each other's IP addresses, the introduction relays see them too, and the relays are third parties. This is disclosed before you first join.
 
@@ -100,17 +104,35 @@ The first time, you are told that others in the room can see your IP address. Yo
 ### ✎ 5 · Watch the Roster
 The roster shows each person, how you are connected (direct or relay), what they receive from you, and what they send you. Failures to connect appear there too.
 
-### ↗ 6 · Invite, Move or Leave
+### 💬 6 · Chat
+Open the **Chat** tab. Pick **Everyone** or one person under **To**, type, press Enter. `/chat <message>` and `/dm <peer> <message>` do the same from the console.
+
+### ● 7 · Record (room creator only)
+If you created the room, **Record** appears in the controls. Press it, read what will be captured, and confirm. Everyone is told. **Stop recording** saves a `.webm` file on your device. Keep the tab visible while recording.
+
+### ↗ 8 · Invite, Move or Leave
 **Copy invite** and **QR** produce the same link. **Move room** invites the people you tick into a new room. **Leave** stops every track and confirms each one ended.
+
+---
+
+## Recording: what is and is not guaranteed
+
+- **Who can record in the app:** only the room creator. The invite carries a hash of a key that the creator's browser made when the room was created and keeps in its `localStorage`. The creator proves itself to each peer by signing a challenge tied to the room and that peer's connection; peers verify it against the hash in their own link. A modified client cannot fake this, but it can ignore the rules about its own behaviour.
+- **What this cannot do:** stop anyone from recording their own screen or microphone with other software, or from running a modified copy of this page that records silently. No peer-to-peer tool can. The notice covers the creator's recording in this app, and the app cannot detect anyone else's.
+- **If the creator's key is lost** (cleared browser data, another browser), nobody can record that room.
+- **Where it goes:** the file is built in memory in the creator's browser and downloaded to that device. Nothing is uploaded. Long recordings use a lot of memory.
+- **Quality:** a 1280×720 grid of everyone's video at 15 frames per second, with shared screens enlarged, and a mix of everyone's audio. Remote video is what the creator receives, so it is capped by each sender's quality settings.
 
 ---
 
 ## Rooms, Caps and Seats
 
-- **Total cap:** a joiner past the cap is refused with an explanation. Provisional: 8.
-- **Video cap:** the first participants by join time get video seats; the rest are audio-only and are told why. Provisional: 4.
+- **Total cap:** a joiner past the cap is refused with an explanation, and is disconnected from everyone (never half-admitted). Provisional: 8.
+- **Video seats:** seats go to the first participants to join, **even if their camera is off**. Provisional: 4. A fifth person cannot take video while four people hold seats, whether or not those four are sending.
+- **Without a seat you neither send nor receive video.** Audio still works both ways. The refusal screen says this.
+- **Seats of people who are sending video are pinned.** A joiner with a wrong clock cannot take the seat of someone who is already sending. If you ever do lose a seat, the page says so, shows the camera as "on, not sent", and offers to stop it.
 - Both numbers are safety stops, **not measured capabilities**. The measurement table is below and is empty until it has been run.
-- Video seats are decided by join time. Clock skew can misorder a joiner, so each joiner lifts its own time above anyone it meets in its first seconds. Two people joining at the same instant can briefly disagree.
+- Join order comes from each person's clock. A joiner lifts its own time above anyone it meets in the first moments after its first hello. Two people joining at the same instant can briefly disagree.
 
 ---
 
@@ -119,9 +141,10 @@ The roster shows each person, how you are connected (direct or relay), what they
 1. **Derive the room.** From the 16-byte secret: the relay topic is `SHA-256("rtc-webCLI/v1/topic" ‖ secret)`, and the SDP encryption password is `HKDF-SHA-256(secret, info = "rtc-webCLI/v1/sdp")`.
 2. **Introduce.** Trystero publishes encrypted offers and answers over Nostr relays. Relays see the topic hash and ciphertext, not the secret.
 3. **Connect.** Each pair of people opens a WebRTC connection. Media is encrypted by the browser (DTLS-SRTP).
-4. **Handshake.** Peers exchange `hello` (protocol, version, name, join time) and `state` (what each is sending) over the data channel.
+4. **Handshake.** Peers exchange `hello` (protocol, version, name, join time, and for the creator a signed proof), `state` (what each is sending), `chat` and `rec` (recording on or off) over the data channel.
 5. **Send only what was published.** Nothing is attached to a connection until you press Send. A peer on another protocol version, or without a video seat, gets no video.
-6. **Track every connection.** Every `RTCPeerConnection` the library creates is registered, so the roster, failures and path labels come from the real connections instead of the library's own view.
+6. **Track every connection.** Every `RTCPeerConnection` the library creates is registered, so the roster, failures and path labels come from the real connections instead of the library's own view. The roster guarantee is checked against the rendered roster (see RT4 below).
+7. **Probe the relays.** An open socket does not mean a working relay, so each relay is asked every 60 s to deliver a signed test event back on a random, room-unrelated topic with a throwaway key. Only relays that do count as reachable. The same probe feeds the banner, `/relays` and the empty-room message.
 
 ---
 
@@ -129,7 +152,7 @@ The roster shows each person, how you are connected (direct or relay), what they
 
 The family's tools mostly send nothing. **This one has to.** The principle here is the one in the paper's wider form: nothing leaves except what the call needs, and every destination is declared.
 
-Every host the page contacts (`/egress` prints the live version for your settings):
+Every host the page is set to contact. This table is **declared, and consistent with the code as reviewed at commit `68ba43d`**: the relay list and the ICE-server list fully replace the library's defaults, so Trystero cannot contact other relays or add its own STUN servers. **A HAR comparison is still open (RT16).** `/egress` prints this table for your settings next to the hosts the page has actually been seen using, and marks any mismatch with ⚠.
 
 | Purpose | Host | Notes |
 |---|---|---|
@@ -143,13 +166,16 @@ Every host the page contacts (`/egress` prints the live version for your setting
 | TURN | none | Never built in. Only a server you configure; then the path shows **relay** and the UI names the host |
 | Peers | each connected peer, directly | Peer-to-peer media, not a service |
 
-The five relays are the first five of Trystero 0.27.0's default list for this app id, pinned in `docs/index.html` so a library update cannot silently change them. A custom relay list in the network settings replaces them; the table then differs by exactly that list.
+The five relays are the first five of Trystero 0.27.0's default list for this app id, pinned in `docs/index.html` so a library update cannot silently change them. The relay probes connect to the same five hosts, so they add no new host. A custom relay list in the network settings replaces them; the table then differs by exactly that list. Custom relays must be `wss://`; `ws://` is accepted for `localhost` only, because the room topic and your IP would otherwise cross the network in plaintext.
+
+**Public relays will come and go.** The pinned relays are volunteer-run and some will go offline or start refusing events over time. The probes make that loud ("The introduction servers are connected but not passing messages") instead of looking like an empty room. Replace the list in `docs/index.html` when that happens.
 
 **What each party can see**
 - **Other participants:** your media (what you chose to send), your IP address, your self-asserted name.
-- **Introduction relays:** your IP address, a hash of the room topic and encrypted connection data. Not the secret, not your media.
+- **Introduction relays:** your IP address, a hash of the room topic and encrypted connection data. Not the secret, not your media. **A relay can see which IP addresses meet in the same room, and when**: every event carries the room's topic hash, which stays the same for the life of the room, and announcements repeat about once a minute.
+- **Retention:** signaling uses ephemeral Nostr event kinds (20000–29999), which relays are not supposed to store. We cannot verify that each relay complies.
 - **The STUN server:** your IP address, unless LAN only is on.
-- **The page host:** that you loaded the page. Never the secret, which is in the URL fragment.
+- **The page host:** that you loaded the page. Never the secret, which is in the URL fragment. The host does serve `index.html`, so it could serve a different page. Hash pinning catches the libraries drifting from what was reviewed; it does not protect you from a malicious host.
 
 **Verification in DevTools**
 1. Open DevTools (F12) → Network.
@@ -159,7 +185,7 @@ The five relays are the first five of Trystero 0.27.0's default list for this ap
 
 `npm test` checks the same things against a mock relay: the secret appears in zero relay frames and zero page requests, relay frames carry no plaintext SDP (`a=fingerprint`, `a=candidate`, `m=`), and nothing loads from outside the origin.
 
-**Data storage:** your display name and network settings are kept in `localStorage`. Nothing about a room is stored. A TURN credential, if you enter one, is kept in `localStorage` in plain text.
+**Data storage:** your display name and network settings are kept in `localStorage`. Nothing about a room's content is stored; chat lives in memory. If you create a room, the creator key (what proves you made it) is kept in `localStorage` in this browser. A recording is held in memory and downloaded to your device when it stops. A TURN credential, if you enter one, is kept in `localStorage` in plain text.
 
 ---
 
@@ -209,7 +235,7 @@ npm run vendor     # rebuilds docs/lib/ and re-pins the SHA-256 values in docs/i
 
 | File | Package | Version | SHA-256 |
 |---|---|---|---|
-| `trystero-nostr.js` | `@trystero-p2p/nostr` (Trystero) | 0.27.0 | `6a6178fe91676060d83288ad57b18257a457e7512d07ff8157e43beded27459b` |
+| `trystero-nostr.js` | `@trystero-p2p/nostr` (Trystero) + its bundled `@noble/secp256k1` signer, re-exported for the relay probe | 0.27.0 | `e38ca0a153946e0d209d895948a7dc6e1dcb7003ea6ae495d75cec42041f1c54` |
 | `qrcode.js` | `qrcode-generator` | 1.5.2 | `065509cfd450f89dbffccc8e37d16f5cb03099aef7c36ab2a23d27611bd97b03` |
 
 `/about` shows the same values and the protocol version.
@@ -226,27 +252,30 @@ npx playwright install chromium    # first time only
 | RT1 | invite secret only in the URL fragment; copy-invite and QR share one format | `npm test` |
 | RT2 | relay frames contain no secret | `npm test` |
 | RT3 | relay frames contain no plaintext SDP | `npm test` |
-| RT4 | roster equals the real connections after joins and leaves | `npm test` (and shown live in the top bar) |
-| RT5 | removal is labelled as a request; Move room invites chosen peers | `npm test` |
+| RT4 | every receiving connection is in the rendered roster, with each kind of media | `npm test`, including a **negative test** where a row is dropped and the check must fail (RF1) |
+| RT5 | removal is a request each person can ignore; reconnects are labelled; Move room invites chosen peers | `npm test` (RF9) |
 | RT6 | room lifetime wording | `npm test`; wording review open |
 | RT7 | media-off join; no sender carries a track until Send | `npm test` |
-| RT8 | joiner past the cap gets a refusal naming the cap; existing call unaffected | `npm test`, with a test-only lower cap |
+| RT8 | joiner past the cap gets a refusal naming the cap; existing call unaffected; two simultaneous joiners are never half-admitted; a slow-clock joiner cannot take a sending peer's seat; losing a seat is announced | `npm test`, with test-only lower caps (RF5, RF6, RF10) |
 | RT9 | **measured** cap | **open** (table below) |
-| RT10 | quality label and policy | `npm test`; **throttled-uplink test open** |
+| RT10 | quality label and policy, for camera and screen share | `npm test` (RF11); **throttled-uplink test open**; the uplink figure is a heuristic (max per-connection estimate ÷ recipients) until that test decides |
 | RT11, RT12 | screen share and screen audio where supported | built; **device matrix open** |
-| RT13 | per-peer failure named with a reason within 15 s | `npm test` (Chromium with UDP blocked) |
+| RT13 | per-peer failure named with a reason within 15 s | `npm test` (Chromium with UDP blocked); "no answer" via a one-way mock relay (RF3) |
 | RT14 | STUN visible; LAN-only | built; **HAR check open** |
 | RT15 | TURN labelled as relay when used | built; **needs a real coturn run** |
-| RT16 | egress table equals the HAR host set | table written; **HAR comparison open** |
+| RT16 | egress table equals the HAR host set | table written; `/egress` compares declared and observed hosts (`npm test`); **HAR comparison open** |
 | RT17 | vendored, hash-pinned, nothing loads from outside the origin | `npm test` |
-| RT18 | empty room vs. unreachable relays | `npm test` |
-| RT19 | console parity | `npm test` for core commands |
+| RT18 | empty room vs. unreachable relays vs. relays that accept sockets but drop or reject events | `npm test` against mock relays in `normal`, `drop` and `reject` modes (RF4) |
+| RT19 | console parity | `npm test` for core commands; `/turn` credentials are redacted from the echo (RF12) |
 | RT20 | non-secure origin explained | built; **manual check on a LAN IP open** |
 | RT21 | leaving ends every track | `npm test`; manual camera-light check open |
 | RT22 | browser-pair matrix | **open** (table below) |
+| RT23 | README makes only the claims in the work order's §4 | review, line by line (this file) |
 | RT24 | names labelled unverified | `npm test` |
 | RT25 | IP disclosure before first join | built; review open |
 | RT26 | incompatible versions refused by name | `npm test` |
+| Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
+| Recording | creator-only button; a non-creator is refused; everyone is told and told again when it stops; a claim from a non-creator is ignored; the saved file is non-empty | `npm test`; **late-joiner notice and long-recording memory use not yet tested** |
 
 **RT9 measurement (open)**
 
@@ -257,6 +286,14 @@ npx playwright install chromium    # first time only
 **RT22 browser-pair matrix (open)**
 
 Chrome, Firefox, Safari on macOS, iOS Safari and Android Chrome, every pair, audio and video both ways. Not yet run. Any failing pair will be listed here.
+
+**Known gaps in the automated tests**
+
+- They run on Chromium only, against a **mock relay**. The real public relays, real networks and other browsers are not exercised.
+- Most checks run with local-address hiding off and LAN-only on, so the default ICE path (hidden `.local` addresses plus STUN) is covered only by one dedicated check and by `/egress`, not by the main flows.
+- The mock relay can drop, reject or forward one direction only (`drop`, `reject`, `oneway`), but it cannot reproduce rate limits, proof-of-work or authentication policies of real relays.
+- Seat theft is tested with a clock shifted by 60 s and an 8 s relay delay, not with every timing.
+- Screen share is tested with Chromium's fake capture source.
 
 ---
 
@@ -274,7 +311,7 @@ server.js                   # Node.js static dev server (+ /lan.json, optional h
 scripts/vendor.mjs          # Bundles docs/lib/ and pins hashes into docs/index.html
 test/
 ├── e2e.mjs                 # End-to-end gates
-└── mock-relay.mjs          # In-process Nostr relay for the tests
+└── mock-relay.mjs          # In-process Nostr relay for the tests (normal, drop, reject, oneway; optional delay)
 ```
 
 ---
@@ -290,9 +327,8 @@ test/
 Each of these is logged, with a trigger for building it:
 
 - **Rooms larger than the cap** (an SFU). Never inside this tool; a server would hold media.
-- **Host controls, lock, waiting room.** Not enforceable without a server, so not faked.
-- **Text chat.** Cheap over a data channel; built when someone in a real session asks.
-- **Local recording.** Needs a visible all-party recording indicator first.
+- **Host controls, lock, waiting room.** Not enforceable without a server, so not faked. (Recording by the creator is offered because it only affects the creator's own copy.)
+- **Cloud recording, chat history, file sharing in chat.** Nothing is stored anywhere but the creator's own recording file.
 - **Zero-relay calls by manual QR exchange** (exactly two people).
 - **Background blur and noise suppression** beyond what the browser provides.
 - **A `run=` agent surface** (`window.__webcli_result`).

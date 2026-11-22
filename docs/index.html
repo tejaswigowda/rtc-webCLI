@@ -36,6 +36,7 @@
   .banner { border-radius:8px; padding:10px 12px; margin:10px 0; border:1px solid var(--line); }
   .banner.bad { border-color:var(--bad); background:rgba(248,81,73,.1); }
   .banner.warn { border-color:var(--warn); background:rgba(210,153,34,.1); }
+  .banner.rec { border-color:var(--bad); background:rgba(248,81,73,.15); font-weight:600; }
   .banner.info { border-color:var(--acc); background:rgba(88,166,255,.08); }
   ul.plain { margin:6px 0; padding-left:18px; }
 
@@ -66,7 +67,25 @@
   .chip.bad { border-color:var(--bad); color:var(--bad); }
   .rrow.fail { background:rgba(248,81,73,.08); }
   .rrow button { font-size:12px; padding:2px 8px; margin-top:4px; }
-  #consoleWrap { flex:1; min-height:0; display:flex; flex-direction:column; border-top:1px solid var(--line); }
+  #tabs { display:flex; border-top:1px solid var(--line); border-bottom:1px solid var(--line); }
+  .tab { flex:1; border:0; border-radius:0; background:transparent; padding:8px; color:var(--dim); }
+  .tab.on { color:var(--fg); box-shadow:inset 0 -2px 0 var(--acc); }
+  .ubadge { background:var(--bad); color:#fff; border-radius:10px; padding:0 6px; font-size:11px; margin-left:4px; }
+  #chatWrap { flex:1; min-height:0; display:flex; flex-direction:column; }
+  #chatOut { flex:1; overflow:auto; padding:8px 12px; }
+  .msg { margin:0 0 10px; }
+  .msg .hd { font-size:12px; color:var(--dim); }
+  .msg .hd b { color:var(--fg); }
+  .msg .body { white-space:pre-wrap; word-break:break-word; }
+  .msg.own .body { background:rgba(31,111,235,.18); border-radius:8px; padding:4px 8px; display:inline-block; }
+  .msg .dm { color:var(--warn); }
+  .msg.sys { color:var(--dim); font-size:12px; text-align:center; }
+  .msg.sys.rec { color:var(--bad); }
+  #chatBar { border-top:1px solid var(--line); padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+  #chatBar .row { display:flex; gap:6px; align-items:center; }
+  #chatBar select { flex:1; }
+  #chatIn { flex:1; }
+  #consoleWrap { flex:1; min-height:0; display:flex; flex-direction:column; }
   #consoleOut { flex:1; overflow:auto; padding:8px 12px; white-space:pre-wrap; word-break:break-word; }
   #consoleOut .err { color:var(--bad); }
   #consoleOut .cmd { color:var(--acc); }
@@ -164,8 +183,18 @@
   <div id="side">
     <h3>Roster <span class="dim" style="text-transform:none;letter-spacing:0">— who is connected and what they receive</span></h3>
     <div id="roster"></div>
-    <h3>Console <span class="dim" style="text-transform:none;letter-spacing:0">— /help</span></h3>
-    <div id="consoleWrap">
+    <div id="tabs">
+      <button id="tabChat" class="tab on" type="button">Chat <span id="chatBadge" class="ubadge hidden">0</span></button>
+      <button id="tabConsole" class="tab" type="button">Console <span class="dim">/help</span></button>
+    </div>
+    <div id="chatWrap">
+      <div id="chatOut"></div>
+      <div id="chatBar">
+        <div class="row"><label class="dim" for="chatTo">To</label><select id="chatTo"><option value="">Everyone</option></select></div>
+        <div class="row"><input id="chatIn" type="text" maxlength="1000" autocomplete="off" placeholder="Type a message"><button id="chatSend" class="primary" type="button">Send</button></div>
+      </div>
+    </div>
+    <div id="consoleWrap" class="hidden">
       <div id="consoleOut" class="mono"></div>
       <input id="consoleIn" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="/help">
     </div>
@@ -174,6 +203,7 @@
     <button id="btnMic">Mic: off</button>
     <button id="btnCam">Camera: off</button>
     <button id="btnShare">Share screen</button>
+    <button id="btnRec" class="hidden">Record</button>
     <span id="why"></span>
     <span class="grow"></span>
     <label class="dim" for="selRes">Send quality</label>
@@ -195,8 +225,8 @@
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const PINS = /*PINS*/{"trystero-nostr.js":{"version":"0.27.0","sha256":"6a6178fe91676060d83288ad57b18257a457e7512d07ff8157e43beded27459b","package":"@trystero-p2p/nostr"},"qrcode.js":{"version":"1.5.2","sha256":"065509cfd450f89dbffccc8e37d16f5cb03099aef7c36ab2a23d27611bd97b03","package":"qrcode-generator"}}/*END-PINS*/;
-const VERSION = '0.1.0';
+const PINS = /*PINS*/{"trystero-nostr.js":{"version":"0.27.0","sha256":"e38ca0a153946e0d209d895948a7dc6e1dcb7003ea6ae495d75cec42041f1c54","package":"@trystero-p2p/nostr"},"qrcode.js":{"version":"1.5.2","sha256":"065509cfd450f89dbffccc8e37d16f5cb03099aef7c36ab2a23d27611bd97b03","package":"qrcode-generator"}}/*END-PINS*/;
+const VERSION = '0.2.0';
 const APP_ID = 'rtc-webCLI';
 const TOPIC_LABEL = 'rtc-webCLI/v1/topic';
 const SDP_LABEL = 'rtc-webCLI/v1/sdp';
@@ -224,7 +254,7 @@ const DEV = (() => {
   if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return {};
   try { return JSON.parse(localStorage.getItem('rtc.dev') || '{}'); } catch { return {}; }
 })();
-const PROTOCOL = DEV.protocol ?? 1;
+const PROTOCOL = DEV.protocol ?? 2;
 const audioCap = DEV.audioCap ?? AUDIO_CAP;
 const videoCap = DEV.videoCap ?? VIDEO_CAP;
 
@@ -262,10 +292,48 @@ async function deriveRoom(secret) {
   return { roomId: hex(topic), password: b64u.enc(pw) };
 }
 
+// Invite fragment: #k=<secret>[&h=<creator hash>]. The hash lets everyone verify who the room's creator is.
+const HASH_RE = /^#k=([A-Za-z0-9_-]{22})(?:&h=([A-Za-z0-9_-]{22}))?$/;
 function parseInvite() {
-  const m = /^#k=([A-Za-z0-9_-]{22})$/.exec(location.hash);
+  const m = HASH_RE.exec(location.hash);
   if (!m) return null;
   try { const s = b64u.dec(m[1]); return s.length === 16 ? s : null; } catch { return null; }
+}
+const parseHostHash = () => HASH_RE.exec(location.hash)?.[2] || null;
+
+// The creator holds an ECDSA key whose hash is in the invite. Only its holder can prove "I created this room".
+const HOST_KEY_PREFIX = 'rtc.host.';
+const ecdsa = { name: 'ECDSA', namedCurve: 'P-256' };
+async function createHostKey() {
+  const kp = await crypto.subtle.generateKey(ecdsa, true, ['sign', 'verify']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+  const h = b64u.enc((await sha256(raw)).slice(0, 16));
+  localStorage.setItem(HOST_KEY_PREFIX + h, JSON.stringify({ jwk: await crypto.subtle.exportKey('jwk', kp.privateKey), pub: b64u.enc(raw) }));
+  return h;
+}
+async function loadHostKey(h) {
+  if (!h) return null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(HOST_KEY_PREFIX + h) || 'null');
+    if (!saved) return null;
+    return { privateKey: await crypto.subtle.importKey('jwk', saved.jwk, ecdsa, false, ['sign']), pub: b64u.dec(saved.pub) };
+  } catch { return null; }
+}
+const hostMessage = (peerId) => enc.encode(`rtc-webCLI/v1/host|${S.roomId}|${peerId}`);
+async function hostProof() {
+  if (!S.hostKey) return null;
+  await S.selfP;
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, S.hostKey.privateKey, hostMessage(S.selfId)));
+  return { pub: b64u.enc(S.hostKey.pub), sig: b64u.enc(sig) };
+}
+async function verifyHost(peerId, host) {
+  if (!S.hostHash || !host || typeof host.pub !== 'string' || typeof host.sig !== 'string') return false;
+  try {
+    const raw = b64u.dec(host.pub);
+    if (raw.length !== 65 || b64u.enc((await sha256(raw)).slice(0, 16)) !== S.hostHash) return false;
+    const key = await crypto.subtle.importKey('raw', raw, ecdsa, false, ['verify']);
+    return await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, b64u.dec(host.sig), hostMessage(peerId));
+  } catch { return false; }
 }
 // Invites must be reachable from other devices, so on a loopback origin the server's LAN address replaces the host.
 let inviteBase = location.href.split('#')[0];
@@ -335,7 +403,7 @@ function resolveInviteBase(force = false) {
   return inviteBaseReady;
 }
 const inviteIsLoopback = () => isLoopbackHost(new URL(inviteBase).hostname);
-const inviteUrl = (secret) => inviteBase + '#k=' + b64u.enc(secret);
+const inviteUrl = (secret, h = parseHostHash()) => inviteBase + '#k=' + b64u.enc(secret) + (h ? '&h=' + h : '');
 
 // ---------------------------------------------------------------------------
 // Settings
@@ -346,9 +414,18 @@ const settings = (() => {
   return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', ...s };
 })();
 const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-function customRelays() {
-  return settings.relays.split(',').map((s) => s.trim()).filter((s) => /^wss?:\/\/[^\s]+$/.test(s));
+// ws:// would put the room topic and your IP on the network in plaintext, so it is accepted for loopback only.
+function parseRelayList(str) {
+  const ok = [], rejected = [];
+  for (const raw of String(str || '').split(',').map((x) => x.trim()).filter(Boolean)) {
+    let u;
+    try { u = new URL(raw); } catch { rejected.push({ url: raw, why: 'not a URL' }); continue; }
+    if (u.protocol === 'wss:' || (u.protocol === 'ws:' && isLoopbackHost(u.hostname))) ok.push(raw);
+    else rejected.push({ url: raw, why: u.protocol === 'ws:' ? 'ws:// is allowed only for localhost; use wss://' : 'must start with wss://' });
+  }
+  return { ok, rejected };
 }
+const customRelays = () => parseRelayList(settings.relays).ok;
 const activeRelays = () => (customRelays().length ? customRelays() : RELAYS);
 
 // ---------------------------------------------------------------------------
@@ -405,9 +482,12 @@ const allPCs = new Set();
 const failures = [];
 const seenFailures = new WeakSet();
 
+let pcCounter = 0;
+const pcClosed = (pc) => pc.connectionState === 'closed' || pc.signalingState === 'closed';
 class TrackedPC extends RTCPeerConnection {
   constructor(cfg) {
     super(cfg);
+    this._uid = ++pcCounter;
     this._born = Date.now();
     this._remoteAt = null;
     this._localList = [];
@@ -419,6 +499,10 @@ class TrackedPC extends RTCPeerConnection {
       if (this.connectionState === 'failed') noteFailure(this);
       scheduleRender();
     });
+  }
+  close() {
+    allPCs.delete(this); // close() fires no connectionstatechange, so the registry must be pruned here
+    return super.close();
   }
   setRemoteDescription(desc, ...rest) {
     if (this._remoteAt == null) this._remoteAt = Date.now();
@@ -507,8 +591,12 @@ const S = {
   sent: { cam: new Map(), mic: new Map(), screen: new Map() },
   draft: { cam: null, mic: null },
   allTracks: new Set(), trackKind: new Map(),
+  hostHash: null, hostKey: null, isCreator: false, selfP: null,
+  pinnedSelf: false, firstHelloAt: 0, seenKeys: new Map(), othersSince: null, noAnswerReported: false,
+  requests: [], removedLocal: new Map(), seatLostLogged: false, outHeights: {},
+  chat: { msgs: [], rendered: 0, unread: 0, tab: 'chat', toSig: '' },
   actions: {}, level: 720, pendingLevel: null, pendingCount: 0, resPref: 'auto',
-  uplinkBps: null, outHeight: null, camSince: 0, relayOpen: 0, left: false,
+  uplinkBps: null, camSince: 0, relayOpen: 0, left: false,
 };
 
 const displayName = (id) => {
@@ -522,11 +610,18 @@ const isCompatible = (p) => p.hello && p.proto === PROTOCOL;
 // Clock skew can misorder a joiner; joiners lift their own joinedAt above anyone they meet in
 // their first seconds, which keeps existing calls unaffected.
 // ---------------------------------------------------------------------------
+// A seat held by someone who is sending video is pinned: nobody, however skewed their clock, outranks them
+// while they keep sending. Everyone else is ordered by join time (seats are held by the first people to join,
+// whether or not they use video).
 function seatOrder() {
-  const rows = [{ id: S.selfId, at: S.joinedAt }];
-  for (const p of S.peers.values()) if (isCompatible(p)) rows.push({ id: p.id, at: p.joinedAt });
-  rows.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
+  const rows = [{ id: S.selfId, at: S.joinedAt, pinned: S.pinnedSelf }];
+  for (const p of S.peers.values()) if (isCompatible(p)) rows.push({ id: p.id, at: p.joinedAt, pinned: !!p.pinned });
+  rows.sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.at - b.at || (a.id < b.id ? -1 : 1));
   return rows.map((r) => r.id);
+}
+function updateSelfPin() {
+  if (S.my.cam || S.my.screen) { if (!S.pinnedSelf && !S.selfPinChecked) { S.pinnedSelf = iHaveVideoSeat(); S.selfPinChecked = true; } }
+  else { S.pinnedSelf = false; S.selfPinChecked = false; }
 }
 const seated = (id) => seatOrder().indexOf(id) !== -1 && seatOrder().indexOf(id) < videoCap;
 const iHaveVideoSeat = () => seated(S.selfId);
@@ -537,6 +632,9 @@ const iHaveVideoSeat = () => seated(S.selfId);
 async function joinFlow() {
   S.secret = parseInvite();
   if (!S.secret) return;
+  S.hostHash = parseHostHash();
+  S.hostKey = await loadHostKey(S.hostHash);
+  S.isCreator = !!S.hostKey;
   hideScreen();
   const { roomId, password } = await deriveRoom(S.secret);
   S.roomId = roomId;
@@ -564,24 +662,31 @@ async function joinFlow() {
     rtcPolyfill: TrackedPC,
   }, roomId);
 
+  S.selfP = S.room.getSelf().then((info) => { S.selfId = info.peerId; return info; });
   const hello = S.room.makeAction('hello');
   const state = S.room.makeAction('state');
   const ctl = S.room.makeAction('ctl');
-  S.actions = { hello, state, ctl };
+  const chat = S.room.makeAction('chat');
+  const rec = S.room.makeAction('rec');
+  S.actions = { hello, state, ctl, chat, rec };
 
   hello.onMessage((m, ctx) => onHello(ctx.peerId, m));
   state.onMessage((m, ctx) => onState(ctx.peerId, m));
   ctl.onMessage((m, ctx) => onCtl(ctx.peerId, m));
+  chat.onMessage((m, ctx) => onChat(ctx.peerId, m));
+  rec.onMessage((m, ctx) => onRec(ctx.peerId, m));
 
   S.room.onPeerJoin(({ peerId }) => onPeerJoin(peerId));
   S.room.onPeerLeave(({ peerId }) => onPeerLeave(peerId));
   S.room.onPeerStream((stream, ctx) => onPeerStream(ctx.peerId, stream, ctx.metadata));
   S.room.onError(onRoomError);
 
-  S.selfId = (await S.room.getSelf()).peerId;
-  log(`Joined. You are ${short(S.selfId)}. Camera and microphone are off. Type /help.`);
+  await S.selfP;
+  log(`Joined. You are ${short(S.selfId)}${S.isCreator ? ' (room creator: you can record)' : ''}. Camera and microphone are off. Type /help.`);
   setInterval(tick, 1000);
   setInterval(pollStats, 2500);
+  runProbes();
+  setInterval(runProbes, PROBE_EVERY_MS);
   render();
 }
 
@@ -593,9 +698,14 @@ function onPeerJoin(peerId) {
     state: { cam: false, mic: false, micMuted: false, screen: false, screenAudio: false },
     streams: {}, joinedLocal: Date.now(), stats: null, path: null,
   };
+  if (S.removedLocal.has(peerId)) {
+    p.reconnected = true;
+    log(`${short(peerId)} reconnected after the request to disconnect them. The request does not stop that; it is not re-applied.`, 'err');
+  }
   S.peers.set(peerId, p);
   sendHello(peerId);
   sendState(peerId);
+  if (REC.on) S.actions.rec.send({ on: true, at: REC.startedAt }, { target: peerId }).catch(() => {});
   log(`${short(peerId)} connected; waiting for hello.`);
   scheduleRender();
 }
@@ -605,6 +715,8 @@ function onPeerLeave(peerId) {
   if (!p) return;
   log(`${displayName(peerId)} left.`);
   for (const kind of Object.keys(S.sent)) S.sent[kind].delete(peerId);
+  S.requests = S.requests.filter((x) => x.target !== peerId && x.from !== peerId);
+  if (p.recording) chatSystem(`${displayName(peerId)} left, so their recording ended.`, true);
   S.peers.delete(peerId);
   document.querySelectorAll(`[data-peer="${CSS.escape(peerId)}"]`).forEach((n) => n.remove());
   if (S.peers.size === 0 && !S.left) log('Everyone else has left. The room exists only while someone is in it.');
@@ -614,8 +726,9 @@ function onPeerLeave(peerId) {
 
 const myName = () => (settings.name || '').trim().slice(0, 24) || `Guest-${short(S.selfId)}`;
 
-function sendHello(target) {
-  S.actions.hello?.send({ proto: PROTOCOL, ver: VERSION, name: myName(), joinedAt: S.joinedAt }, target ? { target } : undefined).catch(() => {});
+async function sendHello(target) {
+  const host = await hostProof().catch(() => null);
+  S.actions.hello?.send({ proto: PROTOCOL, ver: VERSION, name: myName(), joinedAt: S.joinedAt, ...(host ? { host } : {}) }, target ? { target } : undefined).catch(() => {});
 }
 function sendState(target) {
   const m = S.my;
@@ -625,9 +738,15 @@ function sendState(target) {
   }, target ? { target } : undefined).catch(() => {});
 }
 
-function onHello(peerId, m) {
+async function onHello(peerId, m) {
   const p = S.peers.get(peerId);
   if (!p || !m || typeof m !== 'object') return;
+  if (m.host) {
+    const ok = await verifyHost(peerId, m.host);
+    if (ok && !p.isHost) log(`${String(m.name ?? short(peerId)).slice(0, 24)} proved they created this room.`);
+    if (!ok && !p.hostClaimRejected) { p.hostClaimRejected = true; log(`${String(m.name ?? short(peerId)).slice(0, 24)} claims to be the room creator but could not prove it. Ignored.`, 'err'); }
+    p.isHost = ok;
+  }
   p.name = String(m.name ?? '').slice(0, 24);
   p.proto = m.proto;
   p.ver = String(m.ver ?? '');
@@ -636,12 +755,15 @@ function onHello(peerId, m) {
   if (p.proto !== PROTOCOL) {
     log(`${displayName(peerId)} is on an incompatible version (protocol ${p.proto}, you are on ${PROTOCOL}). No media is exchanged with them.`, 'err');
   } else {
-    if (Date.now() - S.joinStart < 3000 && p.joinedAt >= S.joinedAt) {
+    // Lift only during the first moments after my first hello, and never once I am sending video.
+    S.firstHelloAt ||= Date.now();
+    if (Date.now() - S.firstHelloAt < 4000 && !S.pinnedSelf && p.joinedAt >= S.joinedAt) {
       S.joinedAt = p.joinedAt + 1;
       sendHello();
     }
     log(`${displayName(peerId)} said hello (unverified name).`);
   }
+  applyRec(p);
   reconcile();
   scheduleRender();
 }
@@ -649,7 +771,9 @@ function onHello(peerId, m) {
 function onState(peerId, m) {
   const p = S.peers.get(peerId);
   if (!p || !m || typeof m !== 'object') return;
+  const wasSending = p.state.cam || p.state.screen;
   p.state = { cam: !!m.cam, mic: !!m.mic, micMuted: !!m.micMuted, screen: !!m.screen, screenAudio: !!m.screenAudio };
+  if (p.state.cam || p.state.screen) { if (!wasSending && !p.pinned) p.pinned = seated(peerId); } else p.pinned = false;
   for (const kind of ['cam', 'mic', 'screen']) if (!p.state[kind]) detachRemote(p, kind);
   scheduleRender();
 }
@@ -667,14 +791,8 @@ function onPeerStream(peerId, stream, metadata) {
 function onRoomError(err) {
   log(`[${err.code}] ${err.message}`, 'err');
   if (err.code === 'room-full') {
-    showScreen({
-      title: `This room is full (${audioCap} people)`,
-      body: [
-        `Rooms are capped at ${audioCap} people. Everyone connects directly to everyone else, so each extra person adds upload for all of them. A server would be needed to go past that, and this app deliberately has none.`,
-        'The cap is provisional and has not been measured yet.',
-      ],
-      actions: [{ label: 'Leave', cls: 'danger', fn: () => leave('full') }],
-    });
+    // Some peers may have admitted us while others refused. Never stay half-admitted: leave every connection.
+    leave('full');
   } else if (err.code === 'peer-connect-failed') {
     const open = failures.find((f) => !f.peerId && f.pc && Date.now() - f.at < 60000);
     const dup = failures.find((f) => f.peerId === err.peerId && Date.now() - f.at < 30000);
@@ -738,7 +856,8 @@ function refuseVideo() {
     title: `Video is full for this room (${videoCap} people)`,
     body: [
       `Video is limited to ${videoCap} people. Each person uploads their video once per other person, so a room of ${videoCap + 1} would degrade the call for everyone. Beyond the cap you would need a server that relays media, which this app does not have.`,
-      'You can stay in the room with audio only. The existing call is unaffected. The cap is provisional and has not been measured yet.',
+      `Video seats go to the first ${videoCap} people to join, even if their camera is off.`,
+      'You can stay in the room with audio only. Without a seat you neither send nor receive video. The existing call is unaffected. The cap is provisional and has not been measured yet.',
     ],
     actions: [{ label: 'OK' }],
   });
@@ -814,6 +933,7 @@ function sendDraft() {
     if (kind === 'cam') S.camSince = Date.now();
   }
   renderPreview();
+  updateSelfPin();
   sendState();
   reconcile();
   renderSelfTiles();
@@ -825,6 +945,7 @@ function stopKind(kind, why = 'stopped') {
   const stream = S.my[kind];
   if (!stream) return;
   S.my[kind] = null;
+  updateSelfPin();
   reconcile();
   stream.getTracks().forEach((t) => t.stop());
   sendState();
@@ -861,6 +982,8 @@ async function toggleShare() {
     const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: isChromium() });
     trackStream(stream, 'screen');
     S.my.screen = stream;
+    S.camSince = Date.now();
+    updateSelfPin();
     sendState();
     reconcile();
     renderSelfTiles();
@@ -950,15 +1073,14 @@ function renderPeerTiles() {
 // ---------------------------------------------------------------------------
 // Roster (RT4) and status (RT13, RT18)
 // ---------------------------------------------------------------------------
+// Every live sender counts, including tracks this app did not label: a hidden receiver is the failure RT4 exists for.
 function receivesOf(pc) {
   const out = [];
   if (!pc) return out;
   for (const s of pc.getSenders()) {
     const t = s.track;
     if (!t || t.readyState !== 'live') continue;
-    const kind = S.trackKind.get(t.id);
-    if (!kind) continue;
-    out.push({ kind, muted: !t.enabled });
+    out.push({ kind: S.trackKind.get(t.id) || 'other', muted: !t.enabled });
   }
   return out;
 }
@@ -975,23 +1097,43 @@ function rosterRows() {
   for (const p of S.peers.values()) {
     if (!peerInfo[p.id]) rows.push({ id: p.id, p, pc: null, orphan: false });
   }
+  // Membership follows live senders, not connection state: a "disconnected" connection can still carry media.
   for (const pc of allPCs) {
-    if (pc.connectionState === 'connected' && !seenPcs.has(pc)) rows.push({ id: null, p: null, pc, orphan: true });
+    if (!pcClosed(pc) && !seenPcs.has(pc) && (pc.connectionState === 'connected' || receivesOf(pc).length)) rows.push({ id: null, p: null, pc, orphan: true });
   }
   return rows;
 }
 
 function connectedPcCount() {
   let n = 0;
-  for (const pc of allPCs) if (pc.connectionState === 'connected') n++;
+  for (const pc of allPCs) if (!pcClosed(pc) && pc.connectionState === 'connected') n++;
   return n;
 }
 
+// RT4, checked independently of how the roster is built. R: every open connection with a live sender.
+// L: what the rendered roster actually shows, read back from the DOM. Pass only if every receiver is
+// listed, with every kind of media it receives.
 function rt4Check() {
-  const rows = rosterRows();
-  const rowsWithConn = rows.filter((r) => r.pc && r.pc.connectionState === 'connected').length;
-  const pcs = connectedPcCount();
-  return { rosterWithConnection: rowsWithConn, connections: pcs, ok: rowsWithConn === pcs };
+  const R = new Map();
+  for (const pc of allPCs) {
+    if (pcClosed(pc)) continue;
+    const kinds = receivesOf(pc).map((x) => x.kind);
+    if (kinds.length) R.set(pc._uid, kinds);
+  }
+  const L = new Map();
+  document.querySelectorAll('#roster [data-pc]').forEach((row) => {
+    L.set(Number(row.dataset.pc), new Set([...row.querySelectorAll('[data-kind]')].map((c) => c.dataset.kind)));
+  });
+  const missing = [];
+  for (const [uid, kinds] of R) {
+    const listed = L.get(uid);
+    if (!listed) missing.push({ pc: uid, kinds, why: 'not listed' });
+    else {
+      const gone = kinds.filter((k) => !listed.has(k));
+      if (gone.length) missing.push({ pc: uid, kinds: gone, why: 'media not shown' });
+    }
+  }
+  return { ok: missing.length === 0, receivers: R.size, listed: L.size, missing, connections: connectedPcCount() };
 }
 
 function pathLabel(p) {
@@ -1000,13 +1142,110 @@ function pathLabel(p) {
   return st.path;
 }
 
+// ---------------------------------------------------------------------------
+// Relay probes (RF4). An open socket is not a working relay: public relays often accept a connection and then
+// drop, rate-limit or reject events. So each relay is asked to deliver a signed test event back to us, on a
+// random topic unrelated to the room, using a throwaway key. Only a relay that does is counted as reachable.
+// ---------------------------------------------------------------------------
+const PROBE_KIND = 29423; // Nostr ephemeral range, like the library's own events
+const PROBE_TIMEOUT_MS = 5000;
+const PROBE_EVERY_MS = 60000;
+const probes = new Map(); // url -> { state: 'ok' | 'silent' | 'rejected' | 'down', detail, ms, at }
+
+async function makeProbeEvent(topic) {
+  const { secretKey, publicKey } = S.lib.schnorr.keygen();
+  const ev = { kind: PROBE_KIND, tags: [['x', topic]], created_at: Math.floor(Date.now() / 1000), content: 'probe', pubkey: hex(publicKey) };
+  const id = await sha256(enc.encode(JSON.stringify([0, ev.pubkey, ev.created_at, ev.kind, ev.tags, ev.content])));
+  return { ...ev, id: hex(id), sig: hex(await S.lib.schnorr.signAsync(id, secretKey)) };
+}
+
+function probeRelay(url) {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    let ws, done = false, sent = false, okSeen = false, notice = '', myId = null;
+    const finish = (state, detail) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      try { ws?.close(); } catch {}
+      resolve({ state, detail, ms: Math.round(performance.now() - t0), at: Date.now() });
+    };
+    const timer = setTimeout(() => {
+      if (!sent) finish('down', 'no connection within 5 s');
+      else finish('silent', okSeen ? 'accepted the event but never delivered it back' : `no response to the event${notice ? ` (${notice})` : ''}`);
+    }, PROBE_TIMEOUT_MS);
+    const topic = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const sub = hex(crypto.getRandomValues(new Uint8Array(8)));
+    try { ws = new WebSocket(url); } catch (e) { finish('down', e.message); return; }
+    ws.onerror = () => finish('down', 'connection failed');
+    ws.onclose = () => finish(sent ? 'silent' : 'down', sent ? 'connection closed before delivery' : 'connection closed');
+    ws.onopen = async () => {
+      try {
+        const ev = await makeProbeEvent(topic);
+        myId = ev.id;
+        ws.send(JSON.stringify(['REQ', sub, { kinds: [PROBE_KIND], '#x': [topic] }]));
+        ws.send(JSON.stringify(['EVENT', ev]));
+        sent = true;
+      } catch (e) { finish('down', e.message); }
+    };
+    ws.onmessage = (m) => {
+      let f;
+      try { f = JSON.parse(m.data); } catch { return; }
+      if (f[0] === 'EVENT' && f[1] === sub && f[2]?.id === myId) finish('ok', 'delivered');
+      else if (f[0] === 'OK' && f[1] === myId) { if (f[2] === false) finish('rejected', String(f[3] || 'rejected').slice(0, 100)); else okSeen = true; }
+      else if (f[0] === 'CLOSED' && f[1] === sub) finish('rejected', String(f[2] || 'subscription refused').slice(0, 100));
+      else if (f[0] === 'NOTICE') notice = String(f[1] || '').slice(0, 80);
+    };
+  });
+}
+
+async function runProbes() {
+  if (S.left || !S.lib) return;
+  await Promise.all(activeRelays().map(async (u) => { probes.set(u, await probeRelay(u)); }));
+  scheduleRender();
+}
+
 function relayStatus() {
+  const urls = activeRelays();
+  const st = urls.map((u) => probes.get(u));
+  const n = (k) => st.filter((x) => x?.state === k).length;
+  return { total: urls.length, open: n('ok'), ok: n('ok'), silent: n('silent'), rejected: n('rejected'), down: n('down'), pending: st.filter((x) => !x).length, urls };
+}
+
+// Passive: which keys are announcing in this room on the relay sockets the library already holds. Two or more
+// means someone else is trying to meet us, even before any connection exists to show it.
+const hookedSockets = new WeakSet();
+function watchRelayTraffic() {
   let sockets = {};
   try { sockets = S.lib?.getRelaySockets?.() || {}; } catch {}
-  const urls = Object.keys(sockets);
-  const open = urls.filter((u) => sockets[u].readyState === 1).length;
-  S.relayOpen = open;
-  return { total: Math.max(urls.length, activeRelays().length), open, urls };
+  for (const ws of Object.values(sockets)) {
+    if (hookedSockets.has(ws)) continue;
+    hookedSockets.add(ws);
+    ws.addEventListener('message', (e) => {
+      if (typeof e.data !== 'string' || !e.data.startsWith('["EVENT"')) return;
+      try {
+        const ev = JSON.parse(e.data)[2];
+        if (ev?.pubkey && ev.kind !== PROBE_KIND && ev.created_at * 1000 >= S.joinStart - 5000) S.seenKeys.set(ev.pubkey, Date.now());
+      } catch { /* not ours */ }
+    });
+  }
+}
+const othersAnnouncing = () => [...S.seenKeys.values()].filter((t) => Date.now() - t < 70000).length >= 2;
+
+function noAnswerWatch() {
+  const connected = connectedPcCount() > 0 || S.peers.size > 0;
+  if (connected) {
+    S.othersSince = null; S.noAnswerReported = false;
+    for (let i = failures.length - 1; i >= 0; i--) if (failures[i].reason === 'no answer') failures.splice(i, 1);
+    return;
+  }
+  if (!othersAnnouncing()) { S.othersSince = null; return; }
+  S.othersSince ??= Date.now();
+  if (!S.noAnswerReported && Date.now() - S.othersSince > CONNECT_TIMEOUT_MS) {
+    S.noAnswerReported = true;
+    failures.push({ pc: null, at: Date.now(), reason: 'no answer', peerId: null, detail: 'Someone announced themselves in this room, but no connection was made. Their answer may not have reached you (relay loss, or you are using different relays)' });
+    log("Couldn't reach someone who is in this room (no answer). Their reply may not have reached you.", 'err');
+  }
 }
 
 function renderStatus() {
@@ -1014,15 +1253,31 @@ function renderStatus() {
   const rs = relayStatus();
   const age = Date.now() - S.joinStart;
   const peers = S.peers.size;
+  const trying = peers === 0 && othersAnnouncing();
   const msgs = [];
-  if (rs.open === 0 && age > RELAY_GRACE_MS && peers === 0) {
-    msgs.push({ cls: 'bad', text: "Can't reach the introduction servers; others may be waiting." });
-  } else if (rs.open === 0 && age <= RELAY_GRACE_MS) {
-    msgs.push({ cls: 'info', text: 'Connecting to the introduction servers…' });
+  if (REC.on) msgs.push({ cls: 'rec', text: `● You are recording this room (${recElapsed()}). Everyone has been told. The file is saved on this device when you stop.` });
+  for (const rp of recordingPeers()) msgs.push({ cls: 'rec', text: `● ${displayName(rp.id)} (room creator) is recording this room: everyone's video, audio and shared screens, saved on their device.` });
+  for (const rq of S.requests) {
+    msgs.push({ cls: 'warn', text: `${displayName(rq.from)} (unverified name) asked you to disconnect ${displayName(rq.target)}. You can ignore this.`, actions: [
+      { label: 'Disconnect', fn: () => resolveRequest(rq, true) }, { label: 'Ignore', fn: () => resolveRequest(rq, false) }] });
+  }
+  if ((S.my.cam || S.my.screen) && !iHaveVideoSeat()) {
+    msgs.push({ cls: 'warn', text: `You lost your video seat, so your ${S.my.cam && S.my.screen ? 'camera and screen are' : S.my.cam ? 'camera is' : 'screen is'} on but nobody receives ${S.my.cam && S.my.screen ? 'them' : 'it'}. Seats are held by the first ${videoCap} people to join, and a joiner's clock can reorder them.`, actions: [
+      ...(S.my.cam ? [{ label: 'Stop camera', fn: () => stopKind('cam') }] : []), ...(S.my.screen ? [{ label: 'Stop sharing', fn: () => stopKind('screen') }] : [])] });
+  }
+  if (rs.ok === 0) {
+    if (age <= RELAY_GRACE_MS || rs.pending > 0 && age <= RELAY_GRACE_MS + PROBE_TIMEOUT_MS) {
+      msgs.push({ cls: 'info', text: 'Connecting to the introduction servers…' });
+    } else if (rs.silent + rs.rejected > 0) {
+      const why = [...probes.values()].find((x) => x.state === 'rejected' || x.state === 'silent')?.detail;
+      msgs.push({ cls: peers === 0 ? 'bad' : 'warn', text: `The introduction servers are connected but not passing messages${why ? ` (${why})` : ''}. ${peers === 0 ? 'Others may be waiting.' : 'People already connected stay connected; no one new can join.'}` });
+    } else {
+      msgs.push({ cls: peers === 0 ? 'bad' : 'warn', text: peers === 0 ? "Can't reach the introduction servers; others may be waiting." : "Can't reach the introduction servers. People already connected stay connected; no one new can join." });
+    }
+  } else if (trying) {
+    msgs.push({ cls: 'info', text: 'Someone is trying to connect…' });
   } else if (peers === 0 && !failures.some((x) => Date.now() - x.at < 5 * 60000)) {
     msgs.push({ cls: 'info', text: 'No one else is here yet. Share the invite link; the room exists only while someone is in it.' });
-  } else if (rs.open === 0) {
-    msgs.push({ cls: 'warn', text: "Can't reach the introduction servers. People already connected stay connected; no one new can join." });
   }
   for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
     msgs.push({ cls: 'bad', text: `Couldn't reach ${failureWho(f)} directly (${f.reason}).` });
@@ -1030,7 +1285,11 @@ function renderStatus() {
   const sig = JSON.stringify(msgs);
   if (box.dataset.sig === sig) return;
   box.dataset.sig = sig;
-  box.replaceChildren(...msgs.map((m) => el('div', { class: 'banner ' + m.cls, text: m.text })));
+  box.replaceChildren(...msgs.map((m) => {
+    const d = el('div', { class: 'banner ' + m.cls, text: m.text });
+    for (const a of m.actions || []) d.append(' ', el('button', { text: a.label, onclick: a.fn }));
+    return d;
+  }));
 }
 
 function chip(text, cls = '') { return el('span', { class: 'chip ' + cls, text }); }
@@ -1041,14 +1300,19 @@ function renderRoster() {
   const kids = [];
 
   const me = el('div', { class: 'rrow' });
-  me.append(el('div', { class: 'nm', text: `You — ${myName()}` }), el('div', { class: 'meta', text: `id ${short(S.selfId)} · sending: ${mySendingSummary()}` }));
+  me.append(el('div', { class: 'nm', text: `You — ${myName()}${S.isCreator ? ' (room creator)' : ''}${REC.on ? ' ● recording' : ''}` }), el('div', { class: 'meta', text: `id ${short(S.selfId)} · sending: ${mySendingSummary()}` }));
   kids.push(me);
 
+  let dropped = false;
   for (const r of rows) {
     const row = el('div', { class: 'rrow' });
+    if (r.pc) row.dataset.pc = r.pc._uid;
+    // Test hook (localhost only): drop one receiving row so the RT4 check can be seen to fail.
+    if (DEV.dropRosterRow && r.pc && !dropped && receivesOf(r.pc).length) { dropped = true; continue; }
     if (r.orphan) {
       row.append(el('div', { class: 'nm', text: 'Unidentified connection' }));
       row.append(el('div', { class: 'meta', text: 'Connected but has not completed the handshake. Listed because it may receive your media.' }));
+      if (r.pc.connectionState !== 'connected') row.append(chip(`connection: ${r.pc.connectionState}`, 'warn'));
       appendReceives(row, r.pc);
       kids.push(row);
       continue;
@@ -1062,20 +1326,23 @@ function renderRoster() {
     const lab = pathLabel(p);
     if (lab) metaParts.push(lab);
     row.append(el('div', { class: 'meta', text: metaParts.join(' · ') }));
+    if (p.isHost) row.append(chip('room creator', 'ok'));
+    if (p.reconnected) row.append(chip('reconnected after a request to disconnect them', 'warn'));
+    if (p.recording) row.append(chip('● recording', 'bad'));
     if (!p.hello) {
       const late = Date.now() - (p.joinedLocal || Date.now()) > HELLO_TIMEOUT_MS;
       row.append(chip(late ? 'no hello (not rtc-webCLI, or an older build)' : 'waiting for hello…', late ? 'warn' : ''));
     } else if (p.proto !== PROTOCOL) {
       row.append(chip(`${displayName(r.id)} is on an incompatible version (protocol ${p.proto}; yours is ${PROTOCOL})`, 'bad'));
     } else if (!seated(r.id)) {
-      row.append(chip(`audio only — video limit of ${videoCap} reached`, 'warn'));
+      row.append(chip(`audio only: no video seat (first ${videoCap} to join hold them), so no video either way`, 'warn'));
     }
     if (r.pc && r.pc.connectionState !== 'connected') row.append(chip(`connection: ${r.pc.connectionState}`, 'warn'));
     row.append(el('div', { class: 'meta', text: 'receives from you:' }));
     appendReceives(row, r.pc);
     const sends = peerSendingSummary(p);
     row.append(el('div', { class: 'meta', text: `sends to you: ${sends}` }));
-    row.append(el('button', { text: `Ask everyone to disconnect ${displayName(r.id)}`, title: 'A request. Peers that ignore it stay connected, and so can they. There is no host who can enforce removal.', onclick: () => requestRemove(r.id) }));
+    row.append(el('button', { text: `Ask everyone to disconnect ${displayName(r.id)}`, title: 'A request. Each person is asked and can ignore it, and this person can reconnect. There is no host who can enforce removal.', onclick: () => requestRemove(r.id) }));
     kids.push(row);
   }
 
@@ -1092,8 +1359,10 @@ function appendReceives(row, pc) {
   const rec = receivesOf(pc);
   if (!rec.length) { row.append(chip('nothing')); return; }
   for (const r of rec) {
-    const label = r.kind === 'cam' ? 'video' : r.kind === 'mic' ? (r.muted ? 'audio (muted)' : 'audio') : r.kind === 'screen' ? 'screen' : 'screen audio';
-    row.append(chip(label, r.muted ? 'warn' : 'ok'));
+    const label = r.kind === 'cam' ? 'video' : r.kind === 'mic' ? (r.muted ? 'audio (muted)' : 'audio') : r.kind === 'screen' ? 'screen' : r.kind === 'screen-audio' ? 'screen audio' : 'media (unlabelled)';
+    const c = chip(label, r.muted ? 'warn' : 'ok');
+    c.dataset.kind = r.kind;
+    row.append(c);
   }
 }
 
@@ -1114,13 +1383,17 @@ function peerSendingSummary(p) {
 }
 
 function renderControls() {
+  const rb = $('#btnRec');
+  rb.classList.toggle('hidden', !S.isCreator);
+  rb.textContent = REC.on ? `Stop recording (${recElapsed()})` : 'Record';
+  rb.className = (S.isCreator ? '' : 'hidden ') + (REC.on ? 'danger' : '');
   const mic = $('#btnMic'), cam = $('#btnCam'), share = $('#btnShare');
   if (S.my.mic) {
     const on = S.my.mic.getAudioTracks()[0]?.enabled;
     mic.textContent = on ? 'Mic: live (click to mute)' : 'Mic: muted (click to unmute)';
     mic.className = on ? 'on' : 'warn';
   } else { mic.textContent = S.draft.mic ? 'Mic: previewing (click to send)' : 'Mic: off'; mic.className = ''; }
-  cam.textContent = S.my.cam ? 'Camera: live (click to stop)' : S.draft.cam ? 'Camera: previewing (click to send)' : 'Camera: off';
+  cam.textContent = S.my.cam && !iHaveVideoSeat() ? 'Camera: on, not sent (no video seat)' : S.my.cam ? 'Camera: live (click to stop)' : S.draft.cam ? 'Camera: previewing (click to send)' : 'Camera: off';
   cam.className = S.my.cam ? 'on' : '';
   if (!screenSupported()) {
     share.classList.add('hidden');
@@ -1139,11 +1412,12 @@ function render() {
   renderPeerTiles();
   renderSelfTiles();
   renderControls();
+  renderChatTargets();
   const chk = rt4Check();
-  $('#rt4check').textContent = `roster ${chk.rosterWithConnection} / connections ${chk.connections} ${chk.ok ? '✓' : '⚠ mismatch'}`;
+  $('#rt4check').textContent = chk.ok ? `roster ✓ ${chk.receivers} receiving` : `⚠ mismatch: ${chk.missing.length} receiving connection(s) not shown in the roster`;
   const n = S.peers.size + 1;
   $('#roomInfo').dataset.n = n;
-  document.title = `rtc-webCLI · ${n} here`;
+  document.title = `${REC.on || recordingPeers().length ? '● REC · ' : ''}rtc-webCLI · ${n} here`;
 }
 
 let renderQueued = false;
@@ -1156,6 +1430,9 @@ function scheduleRender() {
 function tick() {
   if (S.left) return;
   watchConnectTimeouts();
+  watchRelayTraffic();
+  noAnswerWatch();
+  for (const pc of [...allPCs]) if (pcClosed(pc)) allPCs.delete(pc);
   for (const p of S.peers.values()) {
     if (!p.hello && !p.helloTimedOut && Date.now() - p.joinedLocal > HELLO_TIMEOUT_MS) {
       p.helloTimedOut = true;
@@ -1171,7 +1448,7 @@ function tick() {
 async function pollStats() {
   if (S.left || !S.room) return;
   let uplink = null;
-  let outHeight = null;
+  const outH = {};
   const info = S.room.getPeers();
   for (const [id, pi] of Object.entries(info)) {
     const pc = pi.connection;
@@ -1196,18 +1473,22 @@ async function pollStats() {
         else { st.pathKind = 'direct-stun'; st.path = 'direct (peer-to-peer, address found via STUN)'; }
         if (typeof pair.availableOutgoingBitrate === 'number') uplink = Math.max(uplink ?? 0, pair.availableOutgoingBitrate);
       }
+      const prev = p.stats?.prev || {};
+      const nextPrev = {};
       reports.forEach((r) => {
         if (r.type === 'outbound-rtp' && r.kind === 'video') {
-          if (p.stats?.prevBytes != null && r.timestamp > p.stats.prevTs) st.outKbps = ((r.bytesSent - p.stats.prevBytes) * 8) / (r.timestamp - p.stats.prevTs);
-          st.prevBytes = r.bytesSent; st.prevTs = r.timestamp;
-          if (r.frameHeight) outHeight = Math.max(outHeight ?? 0, r.frameHeight);
+          const before = prev[r.id];
+          if (before && r.timestamp > before.ts) st.outKbps = (st.outKbps || 0) + ((r.bytesSent - before.bytes) * 8) / (r.timestamp - before.ts);
+          nextPrev[r.id] = { bytes: r.bytesSent, ts: r.timestamp };
+          const kind = S.trackKind.get(by.get(r.mediaSourceId)?.trackIdentifier);
+          if (r.frameHeight && kind) outH[kind] = Math.max(outH[kind] ?? 0, r.frameHeight);
         }
       });
-      p.stats = { ...st, prevBytes: st.prevBytes ?? p.stats?.prevBytes, prevTs: st.prevTs ?? p.stats?.prevTs };
+      p.stats = { ...st, prev: nextPrev };
     } catch { /* connection closed mid-poll */ }
   }
   S.uplinkBps = uplink;
-  S.outHeight = outHeight;
+  S.outHeights = outH;
   await applyQuality();
   scheduleRender();
 }
@@ -1226,48 +1507,64 @@ function videoRecipients() {
   return [...S.sent.cam.keys()].filter((id) => S.peers.has(id));
 }
 
+const screenRecipients = () => [...S.sent.screen.keys()].filter((id) => S.peers.has(id));
+
+async function limitSenders(stream, recips, lvl) {
+  const track = stream.getVideoTracks()[0];
+  const info = S.room.getPeers();
+  for (const id of recips) {
+    const pc = info[id]?.connection;
+    if (!pc) continue;
+    for (const snd of pc.getSenders()) {
+      if (snd.track !== track) continue;
+      try {
+        const params = snd.getParameters();
+        if (!params.encodings?.length) params.encodings = [{}];
+        const e0 = params.encodings[0];
+        if (e0.scaleResolutionDownBy !== lvl.scale || e0.maxBitrate !== lvl.maxBitrate) {
+          e0.scaleResolutionDownBy = lvl.scale;
+          e0.maxBitrate = lvl.maxBitrate;
+          await snd.setParameters(params);
+        }
+      } catch { /* sender not ready */ }
+    }
+  }
+}
+
+// One policy for every outgoing video stream: both the camera and a screen share are scaled to the level
+// the per-recipient uplink share allows.
 async function applyQuality() {
-  if (!S.my.cam) { renderQuality(); return; }
-  const recips = videoRecipients();
+  if (!S.my.cam && !S.my.screen) { renderQuality(); return; }
+  const recips = new Set([...videoRecipients(), ...screenRecipients()]);
   let want;
   if (S.resPref !== 'auto') want = Number(S.resPref);
   else if (Date.now() - S.camSince < WARMUP_MS) want = 720; // the bandwidth estimate starts low and ramps up
-  else want = chooseLevel(S.uplinkBps != null && recips.length ? S.uplinkBps / recips.length : null);
+  else want = chooseLevel(S.uplinkBps != null && recips.size ? S.uplinkBps / recips.size : null);
   if (want !== S.level) {
     if (S.resPref !== 'auto' || (S.pendingLevel === want && ++S.pendingCount >= 2)) {
       S.level = want; S.pendingLevel = null; S.pendingCount = 0;
     } else if (S.pendingLevel !== want) { S.pendingLevel = want; S.pendingCount = 1; }
   } else { S.pendingLevel = null; S.pendingCount = 0; }
-  const track = S.my.cam.getVideoTracks()[0];
   const lvl = LEVELS[S.level];
-  const info = S.room.getPeers();
-  for (const id of recips) {
-    const pc = info[id]?.connection;
-    if (!pc) continue;
-    for (const s of pc.getSenders()) {
-      if (s.track !== track) continue;
-      try {
-        const params = s.getParameters();
-        if (!params.encodings?.length) params.encodings = [{}];
-        const enc0 = params.encodings[0];
-        if (enc0.scaleResolutionDownBy !== lvl.scale || enc0.maxBitrate !== lvl.maxBitrate) {
-          enc0.scaleResolutionDownBy = lvl.scale;
-          enc0.maxBitrate = lvl.maxBitrate;
-          await s.setParameters(params);
-        }
-      } catch { /* sender not ready */ }
-    }
-  }
+  if (S.my.cam) await limitSenders(S.my.cam, videoRecipients(), lvl);
+  if (S.my.screen) await limitSenders(S.my.screen, screenRecipients(), lvl);
   renderQuality();
 }
 
 function renderQuality() {
   const line = $('#qualityLine');
-  if (!S.my.cam) { line.textContent = ''; return; }
-  const n = videoRecipients().length;
-  const h = S.outHeight || (S.my.cam.getVideoTracks()[0]?.getSettings().height ?? 720) / LEVELS[S.level].scale;
-  const why = S.resPref === 'auto' ? (S.level < 720 && S.uplinkBps ? ` (uplink ≈ ${Math.round(S.uplinkBps / 1000)} kbps)` : '') : ' (set by you)';
-  line.textContent = `Sending ${Math.round(h)}p to ${n} ${n === 1 ? 'person' : 'people'}${why}.`;
+  const parts = [];
+  const people = (n) => `${n} ${n === 1 ? 'person' : 'people'}`;
+  const why = S.resPref === 'auto' ? (S.level < 720 && S.uplinkBps ? ` (limited by an estimated uplink of about ${Math.round(S.uplinkBps / 1000)} kbps)` : '') : ' (set by you)';
+  const seat = iHaveVideoSeat();
+  for (const [kind, stream, recips, verb] of [['cam', S.my.cam, videoRecipients(), 'Sending'], ['screen', S.my.screen, screenRecipients(), 'Sharing screen at']]) {
+    if (!stream) continue;
+    if (!seat) { parts.push(`Not sending ${kind === 'cam' ? 'video' : 'your screen'}: no video seat.`); continue; }
+    const nominal = (stream.getVideoTracks()[0]?.getSettings().height ?? 720) / LEVELS[S.level].scale;
+    const h = Math.round(S.outHeights[kind] || nominal);
+    parts.push(kind === 'cam' ? `${verb} ${h}p to ${people(recips.length)}${why}.` : `${verb} ${h}p to ${people(recips.length)}${why}.`);
+  }
+  line.textContent = parts.join(' ');
 }
 
 // ---------------------------------------------------------------------------
@@ -1278,8 +1575,19 @@ function requestRemove(id) {
   const peers = [...S.peers.keys()].filter((x) => x !== id);
   S.actions.ctl.send({ t: 'remove', target: id }, peers.length ? { target: peers } : undefined).catch(() => {});
   S.actions.ctl.send({ t: 'remove', target: id }, { target: id }).catch(() => {});
+  S.removedLocal.set(id, Date.now());
   closePeer(id);
-  log(`Asked everyone to disconnect ${name}. Peers that ignore this stay connected, and ${name} can reconnect. The roster shows who is actually connected. For real removal use /move.`);
+  log(`You disconnected ${name} and asked everyone else to. Each person is asked and can ignore it, and ${name} can reconnect: the roster shows who is actually connected. For real removal use /move.`);
+}
+
+function resolveRequest(rq, comply) {
+  S.requests = S.requests.filter((x) => x !== rq);
+  if (comply) {
+    S.removedLocal.set(rq.target, Date.now());
+    closePeer(rq.target);
+    log(`You disconnected ${displayName(rq.target)} at ${displayName(rq.from)}'s request. ${displayName(rq.target)} can still reconnect.`);
+  } else log(`You ignored the request to disconnect ${displayName(rq.target)}.`);
+  scheduleRender();
 }
 
 function closePeer(id) {
@@ -1295,9 +1603,10 @@ function onCtl(from, m) {
         body: `${displayName(from)} (unverified name) asked the room to disconnect you. Nothing forces you to leave, and nothing forces them to stay connected to you.`,
         actions: [{ label: 'Leave', cls: 'danger', fn: () => leave('asked') }, { label: 'Stay' }],
       });
-    } else {
-      log(`${displayName(from)} asked everyone to disconnect ${displayName(m.target)}. Complying with this request.`);
-      closePeer(m.target);
+    } else if (S.peers.has(m.target) && !S.requests.some((x) => x.from === from && x.target === m.target)) {
+      S.requests.push({ from, target: m.target, at: Date.now() });
+      log(`${displayName(from)} asked you to disconnect ${displayName(m.target)}. Nothing happens unless you agree.`);
+      scheduleRender();
     }
   } else if (m.t === 'move' && typeof m.s === 'string' && /^[A-Za-z0-9_-]{22}$/.test(m.s)) {
     showScreen({
@@ -1308,10 +1617,11 @@ function onCtl(from, m) {
   }
 }
 
-function goToRoom(secretB64) {
+async function goToRoom(secretB64) {
+  if (REC.on) await stopRecording();
   stopAllTracks();
   sessionStorage.setItem(AUTOJOIN_KEY, '1');
-  location.hash = '#k=' + secretB64;
+  location.hash = '#k=' + secretB64 + (S.hostHash ? '&h=' + S.hostHash : '');
   location.reload();
 }
 
@@ -1345,6 +1655,316 @@ function openMoveDialog() {
 }
 
 // ---------------------------------------------------------------------------
+// Chat (in memory only; nothing is stored, late joiners see no history)
+// ---------------------------------------------------------------------------
+const CHAT_MAX = 1000;
+
+function chatSystem(text, isRec = false) {
+  S.chat.msgs.push({ sys: true, rec: isRec, text, ts: Date.now() });
+  renderChat();
+}
+
+function sendChat(raw, to = '') {
+  const text = String(raw || '').trim().slice(0, CHAT_MAX);
+  if (!text || !S.room) return;
+  const recipients = to ? [S.peers.get(to)].filter((p) => p && isCompatible(p)) : [...S.peers.values()].filter(isCompatible);
+  if (to && !recipients.length) { log('That person is not available for chat.', 'err'); return; }
+  S.chat.msgs.push({ own: true, name: 'You', text, dm: !!to, toName: to ? displayName(to) : '', ts: Date.now() });
+  if (!recipients.length) S.chat.msgs.push({ sys: true, text: 'No one else is here yet, so nobody received this.', ts: Date.now() });
+  else S.actions.chat.send({ text, dm: !!to }, { target: recipients.map((p) => p.id) }).catch((e) => log(`Chat not delivered: ${e.message}`, 'err'));
+  renderChat();
+}
+
+function onChat(peerId, m) {
+  const p = S.peers.get(peerId);
+  if (!p || !isCompatible(p) || !m || typeof m.text !== 'string') return;
+  const now = Date.now();
+  p.chatTimes = (p.chatTimes || []).filter((t) => now - t < 10000);
+  if (p.chatTimes.length >= 20) return; // flood control
+  p.chatTimes.push(now);
+  const text = m.text.trim().slice(0, CHAT_MAX);
+  if (!text) return;
+  S.chat.msgs.push({ from: peerId, name: displayName(peerId), creator: !!p.isHost, text, dm: !!m.dm, ts: now });
+  if (S.chat.tab !== 'chat') S.chat.unread++;
+  renderChat();
+}
+
+const clock = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+function renderChat() {
+  const out = $('#chatOut');
+  if (!out) return;
+  if (!out.childNodes.length) out.append(el('div', { class: 'msg sys', text: 'Messages are not stored. People who join later do not see earlier ones. A direct message goes only to the person you pick.' }));
+  while (S.chat.rendered < S.chat.msgs.length) {
+    const m = S.chat.msgs[S.chat.rendered++];
+    if (m.sys) { out.append(el('div', { class: 'msg sys' + (m.rec ? ' rec' : ''), text: m.text })); continue; }
+    const hd = el('div', { class: 'hd' });
+    const who = el('b', { text: m.name, title: m.own ? '' : 'Self-asserted name; not verified' });
+    hd.append(who);
+    if (m.creator) hd.append(' ', el('span', { class: 'chip ok', text: 'creator', title: 'Proved they created this room' }));
+    hd.append(` ${clock(m.ts)} `);
+    hd.append(el('span', { class: m.dm ? 'dm' : '', text: m.own ? (m.dm ? `to ${m.toName} (direct message)` : 'to everyone') : (m.dm ? '(direct message to you)' : 'to everyone') }));
+    out.append(el('div', { class: 'msg' + (m.own ? ' own' : '') }, hd, el('div', { class: 'body', text: m.text })));
+  }
+  out.scrollTop = out.scrollHeight;
+  const badge = $('#chatBadge');
+  badge.textContent = S.chat.unread > 99 ? '99+' : String(S.chat.unread);
+  badge.classList.toggle('hidden', !S.chat.unread);
+}
+
+function renderChatTargets() {
+  const sel = $('#chatTo');
+  const peers = [...S.peers.values()].filter(isCompatible);
+  const sig = peers.map((p) => p.id + p.name).join('|');
+  if (sig === S.chat.toSig) return;
+  S.chat.toSig = sig;
+  const keep = sel.value;
+  sel.replaceChildren(el('option', { value: '', text: 'Everyone' }), ...peers.map((p) => el('option', { value: p.id, text: `${p.name || 'Unnamed ' + short(p.id)}${p.isHost ? ' (creator)' : ''} — direct message` })));
+  sel.value = peers.some((p) => p.id === keep) ? keep : '';
+}
+
+function showTab(tab) {
+  S.chat.tab = tab;
+  $('#chatWrap').classList.toggle('hidden', tab !== 'chat');
+  $('#consoleWrap').classList.toggle('hidden', tab !== 'console');
+  $('#tabChat').classList.toggle('on', tab === 'chat');
+  $('#tabConsole').classList.toggle('on', tab === 'console');
+  if (tab === 'chat') { S.chat.unread = 0; renderChat(); $('#chatIn').focus(); } else $('#consoleIn').focus();
+}
+
+// ---------------------------------------------------------------------------
+// Recording. Only the room creator (proved by the key behind the invite) can record. The recording is
+// made in the creator's browser and saved on their device. Everyone else is told, in their own UI.
+// This cannot stop someone recording their own screen with other software; it only covers this app.
+// ---------------------------------------------------------------------------
+const REC = { on: false, mr: null, chunks: [], canvas: null, ctx: null, audio: null, dest: null, nodes: new Map(), ticker: null, startedAt: 0, mime: '', lastAudioSync: 0 };
+
+function pickRecMime() {
+  for (const m of ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']) {
+    if (window.MediaRecorder?.isTypeSupported(m)) return m;
+  }
+  return '';
+}
+
+function confirmRecording() {
+  if (!S.isCreator) { log('Only the person who created this room can record it.', 'err'); return; }
+  if (REC.on) return;
+  if (!window.MediaRecorder) { log('This browser cannot record.', 'err'); return; }
+  const n = S.peers.size;
+  showScreen({
+    title: 'Start recording?',
+    body: [
+      `Everyone in the room will be told, in their own window, that you are recording. ${n} ${n === 1 ? 'person is' : 'people are'} here now, and anyone who joins later is told too.`,
+      'The recording contains everyone\'s video, audio and shared screens as you see them. Chat is not recorded. The file is made in this browser and saved to this device when you stop; it is not uploaded anywhere.',
+      'Keep this tab visible while recording; browsers slow down hidden tabs.',
+    ],
+    actions: [{ label: 'Start recording', cls: 'danger', fn: startRecording }, { label: 'Cancel' }],
+  });
+}
+
+function recTiles() {
+  return [...document.querySelectorAll('#tiles .tile')].map((t) => ({
+    screen: t.classList.contains('screen'),
+    label: t.querySelector('.label')?.textContent || '',
+    video: t.querySelector('video'),
+  }));
+}
+
+function drawRecTile(ctx, t, x, y, w, h) {
+  ctx.fillStyle = '#111';
+  ctx.fillRect(x, y, w, h);
+  const v = t.video;
+  if (v && v.videoWidth && v.readyState >= 2) {
+    const r = Math.min(w / v.videoWidth, h / v.videoHeight);
+    const dw = v.videoWidth * r, dh = v.videoHeight * r;
+    ctx.drawImage(v, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  } else {
+    ctx.fillStyle = '#8b949e';
+    ctx.font = `${Math.round(h / 4)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText((t.label.replace(/^You \(/, '')[0] || '?').toUpperCase(), x + w / 2, y + h / 2);
+  }
+  ctx.fillStyle = 'rgba(0,0,0,.65)';
+  const fs = Math.max(12, Math.round(h / 16));
+  ctx.font = `${fs}px sans-serif`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  const tw = Math.min(w - 8, ctx.measureText(t.label).width + 12);
+  ctx.fillRect(x + 4, y + h - fs - 12, tw, fs + 8);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(t.label, x + 10, y + h - 10, w - 20);
+}
+
+function drawRecFrame() {
+  const { ctx, canvas } = REC;
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+  const tiles = recTiles();
+  if (!tiles.length) return;
+  const main = tiles.find((t) => t.screen);
+  if (main) {
+    const rest = tiles.filter((t) => t !== main).slice(0, 5);
+    const mw = rest.length ? Math.round(W * 0.75) : W;
+    drawRecTile(ctx, main, 0, 0, mw, H);
+    const rh = rest.length ? Math.floor(H / rest.length) : 0;
+    rest.forEach((t, i) => drawRecTile(ctx, t, mw, i * rh, W - mw, rh));
+  } else {
+    const cols = Math.ceil(Math.sqrt(tiles.length)), rows = Math.ceil(tiles.length / cols);
+    const cw = Math.floor(W / cols), ch = Math.floor(H / rows);
+    tiles.forEach((t, i) => drawRecTile(ctx, t, (i % cols) * cw, Math.floor(i / cols) * ch, cw, ch));
+  }
+}
+
+function recAudioStreams() {
+  const list = new Map();
+  for (const a of document.querySelectorAll('audio[data-kind="mic"]')) if (a.srcObject) list.set(a.srcObject.id, a.srcObject);
+  for (const v of document.querySelectorAll('#tiles .tile video')) {
+    const st = v.srcObject;
+    if (st && !v.muted && st.getAudioTracks().length) list.set(st.id, st);
+  }
+  if (S.my.mic) list.set(S.my.mic.id, S.my.mic);
+  if (S.my.screen?.getAudioTracks().length) list.set(S.my.screen.id, S.my.screen);
+  return list;
+}
+
+function syncRecAudio() {
+  const want = recAudioStreams();
+  for (const [id, node] of [...REC.nodes]) {
+    if (!want.has(id)) { try { node.disconnect(); } catch {} REC.nodes.delete(id); }
+  }
+  for (const [id, stream] of want) {
+    if (REC.nodes.has(id)) continue;
+    try {
+      const node = REC.audio.createMediaStreamSource(stream);
+      node.connect(REC.dest);
+      REC.nodes.set(id, node);
+    } catch { /* no live audio track yet */ }
+  }
+}
+
+const recTarget = () => [...S.peers.values()].filter(isCompatible).map((p) => p.id);
+function broadcastRec(on) {
+  const targets = recTarget();
+  if (targets.length) S.actions.rec.send({ on, at: REC.startedAt }, { target: targets }).catch(() => {});
+}
+
+async function startRecording() {
+  if (!S.isCreator || REC.on) return;
+  try {
+    REC.mime = pickRecMime();
+    REC.canvas = Object.assign(document.createElement('canvas'), { width: 1280, height: 720 });
+    REC.ctx = REC.canvas.getContext('2d');
+    REC.audio = new AudioContext();
+    REC.dest = REC.audio.createMediaStreamDestination();
+    await REC.audio.resume();
+    REC.nodes.clear();
+    syncRecAudio();
+    drawRecFrame();
+    const stream = new MediaStream([...REC.canvas.captureStream(15).getVideoTracks(), ...REC.dest.stream.getAudioTracks()]);
+    REC.chunks = [];
+    REC.mr = new MediaRecorder(stream, REC.mime ? { mimeType: REC.mime, videoBitsPerSecond: 2500000 } : undefined);
+    REC.mr.ondataavailable = (e) => { if (e.data && e.data.size) REC.chunks.push(e.data); };
+    REC.startedAt = Date.now();
+    REC.on = true;
+    broadcastRec(true); // tell everyone first
+    REC.mr.start(1000);
+    // A worker timer is not throttled in background tabs the way page timers are.
+    const src = 'let t;onmessage=(e)=>{clearInterval(t);if(e.data)t=setInterval(()=>postMessage(0),66)}';
+    REC.ticker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+    REC.ticker.onmessage = () => {
+      if (!REC.on) return;
+      drawRecFrame();
+      if (Date.now() - REC.lastAudioSync > 1000) { REC.lastAudioSync = Date.now(); syncRecAudio(); }
+    };
+    REC.ticker.postMessage(1);
+    log(`Recording started (${REC.mime || 'browser default'}). Everyone in the room has been told.`);
+    chatSystem('You started recording. Everyone has been notified.', true);
+  } catch (e) {
+    REC.on = false;
+    log(`Could not start recording: ${e.message}`, 'err');
+  }
+  scheduleRender();
+}
+
+async function stopRecording() {
+  if (!REC.on) return;
+  REC.on = false;
+  REC.ticker?.terminate();
+  await new Promise((res) => { REC.mr.onstop = res; try { REC.mr.stop(); } catch { res(); } });
+  broadcastRec(false);
+  const type = REC.mr.mimeType || REC.mime || 'video/webm';
+  const blob = new Blob(REC.chunks, { type });
+  const ext = type.includes('mp4') ? 'mp4' : 'webm';
+  const name = `rtc-webCLI-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.${ext}`;
+  const url = URL.createObjectURL(blob);
+  const a = el('a', { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  REC.nodes.forEach((n) => { try { n.disconnect(); } catch {} });
+  REC.nodes.clear();
+  try { await REC.audio.close(); } catch {}
+  REC.chunks = [];
+  log(`Recording stopped and saved to this device as ${name} (${(blob.size / 1048576).toFixed(1)} MB). It was not uploaded anywhere.`);
+  chatSystem('You stopped recording.', true);
+  scheduleRender();
+}
+
+function toggleRecord() {
+  if (REC.on) return stopRecording();
+  confirmRecording();
+}
+
+// Everyone else: what the creator tells us, accepted only from a peer that proved it is the creator.
+function onRec(peerId, m) {
+  const p = S.peers.get(peerId);
+  if (!p || !m || typeof m !== 'object') return;
+  p.recClaim = { on: !!m.on, at: Number(m.at) || 0 };
+  applyRec(p);
+}
+
+function applyRec(p) {
+  const claim = p.recClaim;
+  if (!claim) return;
+  if (!p.isHost) {
+    if (claim.on && !p.recClaimLogged && p.hello) {
+      p.recClaimLogged = true;
+      log(`${displayName(p.id)} says it is recording but has not proved it is the room creator. Ignored. (A modified client could still record; this app cannot detect that.)`, 'err');
+    }
+    return;
+  }
+  const was = !!p.recording;
+  p.recording = claim.on;
+  if (claim.on && !was) {
+    const msg = `${displayName(p.id)} (room creator) started recording this room: everyone's video, audio and shared screens, saved on their device.`;
+    log(msg, 'err');
+    chatSystem(msg, true);
+    if (p.noticeFor !== claim.at) {
+      p.noticeFor = claim.at;
+      showScreen({
+        title: 'This room is being recorded',
+        body: [
+          `${displayName(p.id)} (the room's creator, verified by the invite) is recording. The recording includes everyone's video, audio and shared screens, and is saved on their device.`,
+          'You can keep your camera, microphone and screen share off, or leave.',
+        ],
+        actions: [{ label: 'Leave the room', cls: 'danger', fn: () => leave('user') }, { label: 'Stay' }],
+      });
+    }
+  } else if (!claim.on && was) {
+    const msg = `${displayName(p.id)} stopped recording.`;
+    log(msg);
+    chatSystem(msg, true);
+  }
+  scheduleRender();
+}
+
+const recordingPeers = () => [...S.peers.values()].filter((p) => p.recording);
+const recElapsed = () => { const s = Math.floor((Date.now() - REC.startedAt) / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
+
+// ---------------------------------------------------------------------------
 // Leaving (RT6, RT21)
 // ---------------------------------------------------------------------------
 function stopAllTracks() {
@@ -1361,6 +1981,7 @@ async function leave(why) {
   if (S.left) return;
   S.left = true;
   const others = S.peers.size;
+  if (REC.on) await stopRecording();
   stopAllTracks();
   try { await S.room?.leave(); } catch {}
   for (const pc of [...allPCs]) { try { pc.close(); } catch {} }
@@ -1368,16 +1989,17 @@ async function leave(why) {
   $('#room').classList.add('hidden');
   document.querySelectorAll('audio[data-kind]').forEach((a) => a.remove());
   const body = [];
-  if (why === 'full') body.push('The room was full, so you did not join.');
+  if (why === 'full') body.push(`Rooms are capped at ${audioCap} people. Everyone connects directly to everyone else, so each extra person adds upload for all of them. A server would be needed to go past that, and this app deliberately has none.`, 'The cap is provisional and has not been measured yet. You were disconnected from everyone, so nobody is left with a half-open connection to you.');
   else if (others === 0) body.push('You were the last one here. This room no longer exists anywhere. Whoever opens the link next starts a fresh, empty room.');
   else body.push(`You left. The room continues for ${others} ${others === 1 ? 'other person' : 'other people'} while any of them stays.`);
   body.push(S.allTracks.size
     ? `Camera, microphone and screen capture stopped. Verified: ${[...S.allTracks].filter((t) => t.readyState === 'ended').length} of ${S.allTracks.size} tracks report "ended".${ended ? '' : ' Some did not; reload this page.'}`
     : 'You never turned on camera, microphone or screen share.');
-  showScreen({ title: 'You left the room', body, actions: [{ label: 'Back to start', fn: () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); } }] });
+  showScreen({ title: why === 'full' ? `This room is full (${audioCap} people)` : 'You left the room', body, actions: [{ label: 'Back to start', fn: () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); } }] });
 }
 
 addEventListener('pagehide', () => { try { stopAllTracks(); } catch {} });
+addEventListener('beforeunload', (e) => { if (REC.on) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------------------------------------------------------------------------
 // Invite / QR (RT1)
@@ -1447,6 +2069,9 @@ const COMMANDS = {
       '/cam              camera preview, send, or stop',
       '/share            start or stop screen share',
       '/send | /cancel   send or discard a camera/mic preview',
+      '/chat <message>   message everyone (the Chat tab shows replies)',
+      '/dm <peer> <message>   direct message one person',
+      '/record           start or stop recording (room creator only)',
       '/res auto|720|360|180   send quality',
       '/remove <peer>    ask everyone to disconnect a peer (a request, not enforcement)',
       '/move [all|peer…] move to a new room with the chosen people',
@@ -1454,8 +2079,8 @@ const COMMANDS = {
       '/invitehost <host:port>|auto   set the LAN address used in invite links',
       '/lan on|off       LAN only (no STUN) — applies on next join',
       '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
-      '/relays           introduction servers and their state',
-      '/egress           every host this page is contacting',
+      '/relays           introduction servers: probe result and room socket for each',
+      '/egress           hosts you SET to contact vs hosts OBSERVED this session (⚠ on a mismatch)',
       '/about            version, protocol, pinned library hashes',
       '/leave            leave and stop every track',
     ].join('\n'));
@@ -1466,10 +2091,10 @@ const COMMANDS = {
     rows.forEach((r, i) => {
       if (r.orphan) { log(`#${i + 1} (unidentified connection) receives: ${receivesOf(r.pc).map((x) => x.kind).join(', ') || 'nothing'}`); return; }
       const rec = receivesOf(r.pc).map((x) => x.kind + (x.muted ? ' (muted)' : '')).join(', ') || 'nothing';
-      log(`#${i + 1} ${displayName(r.id)} [unverified] id ${short(r.id)} v${r.p.ver || '?'} ${pathLabel(r.p) || ''}\n     receives from you: ${rec}\n     sends to you: ${peerSendingSummary(r.p)}`);
+      log(`#${i + 1} ${displayName(r.id)}${r.p.isHost ? ' [room creator]' : ' [unverified]'}${r.p.recording ? ' [recording]' : ''} id ${short(r.id)} v${r.p.ver || '?'} ${pathLabel(r.p) || ''}\n     receives from you: ${rec}\n     sends to you: ${peerSendingSummary(r.p)}`);
     });
     const c = rt4Check();
-    log(`roster ${c.rosterWithConnection} / connections ${c.connections} ${c.ok ? 'ok' : 'MISMATCH'}`, c.ok ? '' : 'err');
+    log(c.ok ? `roster check ok: ${c.receivers} receiving connection(s), all listed` : `roster check MISMATCH: ${c.missing.length} receiving connection(s) not shown`, c.ok ? '' : 'err');
   },
   path(args) {
     const list = args[0] ? [findPeer(args[0])].filter(Boolean) : [...S.peers.values()];
@@ -1488,6 +2113,13 @@ const COMMANDS = {
     const n = S.peers.size + 1;
     log(`Room cap: ${audioCap} people (hard refusal beyond). Video cap: ${videoCap} people. Both are provisional and NOT measured yet.\nHere now: ${n}. Your video seat: ${iHaveVideoSeat() ? 'yes' : 'no (audio only)'}.\nSeat order: ${seatOrder().map((id, i) => `${i + 1}.${id === S.selfId ? 'you' : displayName(id)}`).join('  ')}`);
   },
+  chat(args) { if (!args.length) { showTab('chat'); return; } sendChat(args.join(' ')); },
+  dm(args) {
+    const p = findPeer(args[0]);
+    if (!p || args.length < 2) { log('Usage: /dm <peer> <message>   (see /peers)', 'err'); return; }
+    sendChat(args.slice(1).join(' '), p.id);
+  },
+  record() { return toggleRecord(); },
   mic() { toggleMic(); },
   mute() { toggleMic(); },
   cam() { toggleCam(); },
@@ -1533,17 +2165,47 @@ const COMMANDS = {
   },
   relays() {
     const rs = relayStatus();
-    log(`Introduction servers (${customRelays().length ? 'custom list' : 'built-in list'}): ${rs.open} of ${rs.total} reachable`);
+    log(`Introduction servers (${customRelays().length ? 'custom list' : 'built-in list'}): ${rs.ok} of ${rs.total} passing messages${rs.pending ? `, ${rs.pending} still being checked` : ''}`);
     const sockets = S.lib?.getRelaySockets?.() || {};
-    for (const u of activeRelays()) log(`  ${u}  ${['connecting', 'open', 'closing', 'closed'][sockets[u]?.readyState] ?? 'not started'}`);
+    for (const u of activeRelays()) {
+      const pr = probes.get(u);
+      const sock = ['connecting', 'open', 'closing', 'closed'][sockets[u]?.readyState] ?? 'not started';
+      log(`  ${u}  probe: ${pr ? `${pr.state} (${pr.detail}, ${pr.ms} ms, ${Math.round((Date.now() - pr.at) / 1000)} s ago)` : 'pending'}  room socket: ${sock}`);
+    }
+    const bad = parseRelayList(settings.relays).rejected;
+    for (const r of bad) log(`  ignored custom relay ${r.url}: ${r.why}`, 'err');
   },
-  egress() {
-    log(['Hosts this page contacts:',
-      `  page origin   ${location.host || location.protocol}`,
-      ...activeRelays().map((u) => `  relay         ${new URL(u).host}`),
-      settings.lan ? '  STUN          none (LAN only)' : `  STUN          ${hostOf(settings.stun || DEFAULT_STUN)}`,
-      settings.turnUrl ? `  TURN          ${hostOf(settings.turnUrl)} (yours)` : '  TURN          none',
-      '  peers         each connected peer, directly (their IP addresses are visible to each other)'].join('\n'));
+  async egress() {
+    const declared = new Map();
+    const add = (m, host, role) => { if (host) m.set(host, [...(m.get(host) || []), role]); };
+    add(declared, location.host, 'page origin');
+    for (const u of activeRelays()) add(declared, new URL(u).host, 'relay');
+    if (!settings.lan) add(declared, hostOf(settings.stun || DEFAULT_STUN), 'STUN');
+    if (settings.turnUrl) add(declared, hostOf(settings.turnUrl), 'TURN (yours)');
+
+    const observed = new Map();
+    for (const e of performance.getEntriesByType('resource')) { try { add(observed, new URL(e.name).host, 'page request'); } catch {} }
+    const sockets = S.lib?.getRelaySockets?.() || {};
+    for (const [u, ws] of Object.entries(sockets)) { try { add(observed, new URL(u).host, `relay socket (${['connecting', 'open', 'closing', 'closed'][ws.readyState]})`); } catch {} }
+    for (const u of probes.keys()) { try { add(observed, new URL(u).host, 'relay probe'); } catch {} }
+    let iceSeen = 0;
+    for (const pc of [...allPCs]) {
+      try {
+        (await pc.getStats()).forEach((r) => {
+          if (r.type === 'local-candidate' && r.url) { iceSeen++; add(observed, hostOf(r.url), `ICE ${r.url.split(':')[0].toUpperCase()}`); }
+        });
+      } catch { /* closed */ }
+    }
+    const roles = (m, h) => [...new Set(m.get(h))].join(', ');
+    const unexpected = [...observed.keys()].filter((h) => !declared.has(h));
+    const lines = ['Hosts this page is SET to contact (from your settings):'];
+    for (const h of declared.keys()) lines.push(`  ${h.padEnd(34)} ${roles(declared, h)}`);
+    lines.push('  peers: each connected peer, directly (their IP addresses are visible to each other)');
+    lines.push('', 'Hosts OBSERVED this session (page requests, relay sockets, relay probes, ICE candidates):');
+    for (const h of observed.keys()) lines.push(`  ${declared.has(h) ? '  ' : '⚠ '}${h.padEnd(32)} ${roles(observed, h)}`);
+    if (!iceSeen) lines.push(settings.lan ? '  (LAN only: no STUN or TURN candidates, as expected)' : '  (no STUN/TURN candidate observed yet; connect or wait for the first connection attempt)');
+    lines.push('', unexpected.length ? `⚠ ${unexpected.length} observed host(s) are not in your settings: ${unexpected.join(', ')}` : '✓ every observed host is one you set.');
+    log(lines.join('\n'), unexpected.length ? 'err' : '');
   },
   about() {
     log([`rtc-webCLI ${VERSION}  protocol ${PROTOCOL}`,
@@ -1555,7 +2217,8 @@ const COMMANDS = {
 async function runCommand(line) {
   const parts = line.trim().replace(/^\//, '').split(/\s+/);
   const name = parts.shift().toLowerCase();
-  log('/' + [name, ...parts].join(' '), 'cmd');
+  const shown = name === 'turn' && parts.length > 1 ? [parts[0], ...parts.slice(1).map(() => '•••')] : parts;
+  log('/' + [name, ...shown].join(' '), 'cmd');
   const fn = COMMANDS[name];
   if (!fn) { log(`Unknown command /${name}. Try /help.`, 'err'); return; }
   try { await fn(parts); } catch (e) { log(`/${name} failed: ${e.message}`, 'err'); }
@@ -1600,9 +2263,10 @@ function bootLanding() {
   refresh();
   resolveInviteBase().then(refresh);
 
-  $('#btnCreate').onclick = () => {
+  $('#btnCreate').onclick = async () => {
     const s = crypto.getRandomValues(new Uint8Array(16));
-    history.replaceState(null, '', location.pathname + location.search + '#k=' + b64u.enc(s));
+    const h = await createHostKey();
+    history.replaceState(null, '', location.pathname + location.search + '#k=' + b64u.enc(s) + '&h=' + h);
     refresh();
   };
   $('#btnCopyLanding').onclick = async () => {
@@ -1619,7 +2283,12 @@ function bootLanding() {
     settings.inviteHost = $('#setInviteHost').value.trim();
     saveSettings();
     resolveInviteBase(true).then(refresh);
-    $('#settingsNote').textContent = settings.inviteHost && !parseInviteHost(settings.inviteHost) ? 'Saved, but the invite address is not usable (use a non-loopback host).' : 'Saved.';
+    const bad = parseRelayList(settings.relays).rejected;
+    const notes = [];
+    if (settings.inviteHost && !parseInviteHost(settings.inviteHost)) notes.push('the invite address is not usable (use a non-loopback host)');
+    for (const r of bad) notes.push(`relay ${r.url} ignored: ${r.why}`);
+    if (bad.length && !customRelays().length) notes.push('no valid custom relay, so the built-in list is used');
+    $('#settingsNote').textContent = notes.length ? `Saved, but ${notes.join('; ')}.` : 'Saved.';
   };
   $('#btnJoin').onclick = () => {
     settings.name = nameIn.value.trim().slice(0, 24);
@@ -1656,6 +2325,12 @@ $('#btnCam').onclick = toggleCam;
 $('#btnShare').onclick = toggleShare;
 $('#btnLeave').onclick = () => leave('user');
 $('#btnMove').onclick = openMoveDialog;
+$('#btnRec').onclick = toggleRecord;
+$('#tabChat').onclick = () => showTab('chat');
+$('#tabConsole').onclick = () => showTab('console');
+const submitChat = () => { const i = $('#chatIn'); sendChat(i.value, $('#chatTo').value); i.value = ''; i.focus(); };
+$('#chatSend').onclick = submitChat;
+$('#chatIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitChat(); });
 $('#btnInvite').onclick = copyInvite;
 $('#btnQr').onclick = () => showQr();
 $('#selRes').onchange = (e) => COMMANDS.res([e.target.value]);
@@ -1670,8 +2345,8 @@ bootLanding();
 
 // Read-only handle for tests and DevTools.
 window.rtc = {
-  version: VERSION, protocol: PROTOCOL, S, chooseLevel, rt4Check, rosterRows, allTracksEnded,
-  run: runCommand, relayStatus, failures, allPCs,
+  version: VERSION, protocol: PROTOCOL, S, chooseLevel, rosterRows, allTracksEnded,
+  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
 };
 </script>
 </body>

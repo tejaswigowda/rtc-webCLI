@@ -9661,5 +9661,6 @@ var defaultRelayUrls = [
 export {
   defaultRelayUrls,
   getRelaySockets,
-  joinRoom
+  joinRoom,
+  schnorr
 };

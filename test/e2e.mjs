@@ -15,6 +15,7 @@ const check = (name, ok, extra = '') => {
   results.push({ name, ok });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`);
 };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms = 30000, step = 250) => {
   const t0 = Date.now();
   for (;;) {
@@ -33,8 +34,9 @@ const browser = await chromium.launch({
 });
 
 const requests = [];
-async function open(name, { url = ORIGIN + '/', dev = {}, relays = relay.url, lan = true } = {}) {
+async function open(name, { url = ORIGIN + '/', dev = {}, relays = relay.url, lan = true, clockShift = 0 } = {}) {
   const ctx = await browser.newContext({ permissions: ['camera', 'microphone', 'clipboard-read', 'clipboard-write'] });
+  if (clockShift) await ctx.addInitScript((shift) => { const real = Date.now.bind(Date); Date.now = () => real() + shift; }, clockShift);
   await ctx.addInitScript(({ dev, relays, lan, name }) => {
     if (!localStorage.getItem('rtc.settings')) {
       localStorage.setItem('rtc.settings', JSON.stringify({ name, lan, relays }));
@@ -49,7 +51,7 @@ async function open(name, { url = ORIGIN + '/', dev = {}, relays = relay.url, la
   return page;
 }
 const create = async (page) => { await page.click('#btnCreate'); return page.url(); };
-const join = async (page) => { await page.click('#btnJoin'); await page.waitForSelector('#room:not(.hidden)'); };
+const join = async (page) => { await page.click('#btnJoin'); await page.waitForSelector('#room:not(.hidden)'); await page.click('#tabConsole', { timeout: 3000 }).catch(() => {}); };
 const peerCount = (page) => page.evaluate(() => window.rtc.S.peers.size);
 const connectedReady = (page, n) => until(() => page.evaluate((n) => {
   const ps = [...window.rtc.S.peers.values()];
@@ -63,8 +65,8 @@ try {
   // --- Two peers -------------------------------------------------------------
   const A = await open('Alice');
   const inviteUrl = await create(A);
-  check('RT1 invite is origin + #k=<22 chars>', /^http:\/\/localhost:\d+\/#k=[A-Za-z0-9_-]{22}$/.test(inviteUrl), inviteUrl);
-  const secret = inviteUrl.split('#k=')[1];
+  check('RT1 invite is origin + #k=<secret>&h=<creator hash>', /^http:\/\/localhost:\d+\/#k=[A-Za-z0-9_-]{22}&h=[A-Za-z0-9_-]{22}$/.test(inviteUrl), inviteUrl);
+  const secret = inviteUrl.split('#k=')[1].slice(0, 22);
   const landingInvite = await A.textContent('#landingInvite');
   check('invite shown on the landing page uses the LAN address, not loopback', !/\/\/(localhost|127\.0\.0\.1)/.test(landingInvite) && landingInvite.endsWith('#k=' + inviteUrl.split('#k=')[1]), landingInvite);
   await join(A);
@@ -110,11 +112,12 @@ try {
   await A.fill('#consoleIn', '/path'); await A.press('#consoleIn', 'Enter');
   check('RT15 /path labels the connection path', await until(async () => /direct|relay/.test(await A.textContent('#consoleOut')), 8000));
   await A.fill('#consoleIn', '/about'); await A.press('#consoleIn', 'Enter');
-  check('RT26 /about shows protocol + lib hash', /protocol 1/.test(await A.textContent('#consoleOut')) && /sha256:[0-9a-f]{64}/.test(await A.textContent('#consoleOut')));
+  check('RT26 /about shows protocol + lib hash', /protocol 2/.test(await A.textContent('#consoleOut')) && /sha256:[0-9a-f]{64}/.test(await A.textContent('#consoleOut')));
   await A.fill('#consoleIn', '/relays'); await A.press('#consoleIn', 'Enter');
   await A.fill('#consoleIn', '/egress'); await A.press('#consoleIn', 'Enter');
-  check('RT16 /egress lists origin, relay, STUN state', /relay\s+127\.0\.0\.1/.test(await A.textContent('#consoleOut')) && /none \(LAN only\)/.test(await A.textContent('#consoleOut')));
-
+  check('RT16/RF13 /egress shows declared and observed hosts, observed ⊆ declared (LAN-only)',
+    await until(async () => { const t = await A.textContent('#consoleOut'); return /SET to contact/.test(t) && /OBSERVED/.test(t) && /127\.0\.0\.1:\d+\s+relay/.test(t) && /every observed host is one you set/.test(t) && !/⚠ \d+ observed/.test(t); }, 15000));
+  check('RF4 /relays reports a probe result per relay', await until(async () => /probe: ok/.test(await A.textContent('#consoleOut')), 5000));
   await A.fill('#consoleIn', '/mute'); await A.press('#consoleIn', 'Enter');
 
   // --- RT2 / RT3: relay frames never carry the secret or plaintext SDP ----------
@@ -129,10 +132,50 @@ try {
   const C = await open('Carol', { url: inviteUrl });
   await join(C);
   check('3 peers connect; RT4 holds on all', (await connectedReady(A, 2)) && (await connectedReady(B, 2)) && (await connectedReady(C, 2)));
+  // --- Chat -----------------------------------------------------------------------------
+  for (const pg of [A, B, C]) await pg.click('#tabChat');
+  await A.fill('#chatIn', 'hello everyone'); await A.press('#chatIn', 'Enter');
+  check('chat: message to everyone reaches B and C', await until(async () => /hello everyone/.test(await B.textContent('#chatOut')) && /hello everyone/.test(await C.textContent('#chatOut')), 15000));
+  const cOpts = await B.$$eval('#chatTo option', (os) => os.map((o) => o.textContent));
+  const toCarol = await B.$$eval('#chatTo option', (os) => os.find((o) => /Carol/.test(o.textContent))?.value);
+  await B.selectOption('#chatTo', toCarol);
+  await B.fill('#chatIn', 'psst only carol'); await B.press('#chatIn', 'Enter');
+  check('chat: direct message arrives labelled, and only for its recipient',
+    await until(async () => /psst only carol/.test(await C.textContent('#chatOut')) && /direct message to you/.test(await C.textContent('#chatOut')), 15000)
+    && !/psst only carol/.test(await A.textContent('#chatOut')), cOpts.join(' | '));
+  check('chat: creator is marked for everyone, with proof', /creator/.test(await B.textContent('#chatOut')) && await B.evaluate(() => [...window.rtc.S.peers.values()].some((p) => p.isHost)) && !(await A.evaluate(() => [...window.rtc.S.peers.values()].some((p) => p.isHost))));
+  await A.click('#tabConsole');
+  await A.fill('#consoleIn', '/chat from console'); await A.press('#consoleIn', 'Enter');
+  check('console /chat parity: message arrives in B\'s chat', await until(async () => /from console/.test(await B.textContent('#chatOut')), 10000));
+
+  // --- Recording: creator only, everyone is told --------------------------------------------
+  check('only the creator has a Record button', await A.isVisible('#btnRec') && !(await B.isVisible('#btnRec')) && !(await C.isVisible('#btnRec')));
+  await B.click('#tabConsole');
+  await B.fill('#consoleIn', '/record'); await B.press('#consoleIn', 'Enter');
+  check('a non-creator cannot start recording', await until(async () => /Only the person who created this room can record/.test(await B.textContent('#consoleOut')), 5000) && !(await B.evaluate(() => window.rtc.REC.on)));
+  await A.click('#btnRec');
+  await A.click('#overlayCard button:has-text("Start recording")');
+  check('creator is recording', await until(() => A.evaluate(() => window.rtc.REC.on), 10000));
+  check('B and C are told in their own UI', await until(async () => /is recording this room/.test(await B.textContent('#status')) && /is recording this room/.test(await C.textContent('#status')) && /This room is being recorded/.test(await B.textContent('#overlayCard')), 20000));
+  await B.click('#overlayCard button:has-text("Stay")'); await C.click('#overlayCard button:has-text("Stay")');
+  check('roster marks who is recording', /recording/.test(await B.textContent('#roster')));
+  await sleep(2500);
+  const dl = A.waitForEvent('download', { timeout: 20000 });
+  await A.click('#btnRec');
+  const file = await dl;
+  const { size } = await (await import('node:fs/promises')).stat(await file.path());
+  check('stopping saves a non-empty recording on the creator\'s device', size > 1000 && /^rtc-webCLI-.*\.(webm|mp4)$/.test(file.suggestedFilename()), `${file.suggestedFilename()} ${size} bytes`);
+  check('B and C are told it stopped', await until(async () => !/is recording this room/.test(await B.textContent('#status')) && !/is recording this room/.test(await C.textContent('#status')), 15000));
+  // A non-creator claiming to record is ignored by everyone else.
+  await B.evaluate(() => window.rtc.S.actions.rec.send({ on: true, at: Date.now() }));
+  await sleep(1500);
+  check('a recording claim from a non-creator is ignored', !/is recording this room/.test(await A.textContent('#status')) && !/is recording this room/.test(await C.textContent('#status')));
+
+  await C.click('#tabChat'); await C.click('#btnMic'); await C.waitForSelector('#preview'); await C.click('#preview button.primary');
   await C.click('#btnLeave');
   await C.waitForSelector('#overlay:not(.hidden)');
   check('RT6 leaver sees the room continues for others', /continues for 2 other people/.test(await C.textContent('#overlayCard')), (await C.textContent('#overlayCard')).slice(0, 200));
-  check('RT21 leaving ended every track', /Verified/.test(await C.textContent('#overlayCard')) || (await C.evaluate(() => window.rtc.allTracksEnded())));
+  check('RT21 leaving ended every track (non-vacuous)', /Verified: [1-9]\d* of [1-9]\d* tracks/.test(await C.textContent('#overlayCard')) && await C.evaluate(() => window.rtc.S.allTracks.size > 0 && window.rtc.allTracksEnded()), (await C.textContent('#overlayCard')).slice(-120));
   check('after churn A/B roster == connections', (await connectedReady(A, 1)) && (await connectedReady(B, 1)));
 
   // --- RT5: request-to-remove is honest ----------------------------------------
@@ -142,6 +185,42 @@ try {
   const roster = await A.textContent('#roster');
   check('RT5 remove button is labelled as a request', /Ask everyone to disconnect/.test(roster));
 
+  // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
+  // The roster re-renders at least once a second; read the DOM only after it has caught up.
+  let rt4;
+  await until(async () => { rt4 = await A.evaluate(() => window.rtc.rt4Check()); return rt4.ok && rt4.receivers >= 1; }, 8000);
+  check('RF1 independent RT4 check passes with a live camera', rt4.ok && rt4.receivers >= 1, JSON.stringify(rt4));
+  const rf2 = await A.evaluate(async () => {
+    const pc = new window.rtc.TrackedPC({ iceServers: [] });
+    const c = document.createElement('canvas'); c.width = 16; c.height = 16; c.getContext('2d').fillRect(0, 0, 4, 4);
+    const track = c.captureStream(5).getVideoTracks()[0];
+    pc.addTrack(track, new MediaStream([track]));
+    Object.defineProperty(pc, 'connectionState', { get: () => 'disconnected' });
+    await new Promise((r) => setTimeout(r, 1500));
+    const row = document.querySelector(`#roster [data-pc="${pc._uid}"]`);
+    const res = { listed: !!row, chip: row ? /disconnected/.test(row.textContent) : false, ok: window.rtc.rt4Check().ok, kinds: [...(row?.querySelectorAll('[data-kind]') ?? [])].map((x) => x.dataset.kind) };
+    pc.close(); track.stop();
+    return res;
+  });
+  check('RF2 a "disconnected" connection with a live sender stays in the roster, with a state chip', rf2.listed && rf2.chip && rf2.ok && rf2.kinds.includes('other'), JSON.stringify(rf2));
+  check('RF15 closed connections leave the registry (20 create/close cycles)', await A.evaluate(() => { const before = window.rtc.allPCs.size; for (let i = 0; i < 20; i++) new window.rtc.TrackedPC({}).close(); return window.rtc.allPCs.size - before; }) === 0);
+  const negUrl = ORIGIN + '/#k=' + 'N'.repeat(22);
+  const N1 = await open('Neg', { url: negUrl, dev: { dropRosterRow: true } }); await join(N1);
+  const N2 = await open('Pos', { url: negUrl }); await join(N2);
+  await connectedReady(N1, 1);
+  await N1.click('#btnCam'); await N1.waitForSelector('#preview'); await N1.click('#preview button.primary');
+  const mismatch = await until(async () => { const r = await N1.evaluate(() => window.rtc.rt4Check()); return !r.ok && /mismatch/.test(await N1.textContent('#rt4check')); }, 20000);
+  check('RF1 negative test: a roster that drops a receiving row is reported as a mismatch', mismatch, await N1.textContent('#rt4check'));
+  await N1.close(); await N2.close();
+
+  // --- RF12 / RF14: no credential on screen, no plaintext relays ---------------------------------
+  await A.fill('#consoleIn', '/turn turn:turn.example.org:3478 alice s3cretpass'); await A.press('#consoleIn', 'Enter');
+  const consoleText = await A.textContent('#consoleOut');
+  check('RF12 /turn credentials appear nowhere in the page text', !consoleText.includes('s3cretpass') && !consoleText.includes('alice') && /\/turn turn:turn\.example\.org:3478 •••/.test(consoleText) && !(await A.textContent('body')).includes('s3cretpass'));
+  await A.fill('#consoleIn', '/turn off'); await A.press('#consoleIn', 'Enter');
+  const relayParse = await A.evaluate(() => window.rtc.parseRelayList('ws://evil.example.org, wss://ok.example.org, ws://localhost:1234, http://x.example.org, nonsense'));
+  check('RF14 ws:// accepted for loopback only; others rejected with a reason', JSON.stringify(relayParse.ok) === JSON.stringify(['wss://ok.example.org', 'ws://localhost:1234']) && relayParse.rejected.length === 3 && relayParse.rejected.every((r) => r.why), JSON.stringify(relayParse));
+
   // --- RT21 full leave with camera on -----------------------------------------
   await A.click('#btnLeave');
   await A.waitForSelector('#overlay:not(.hidden)');
@@ -149,7 +228,7 @@ try {
   check('RT21 leave with camera on → all tracks report ended', await A.evaluate(() => window.rtc.allTracksEnded()) && /Verified: \d+ of \d+ tracks/.test(overlay), overlay.slice(0, 160));
 
   // --- RT26: incompatible version -------------------------------------------------
-  const E = await open('Eve', { url: inviteUrl, dev: { protocol: 2 } });
+  const E = await open('Eve', { url: inviteUrl, dev: { protocol: 3 } });
   await join(E);
   check('RT26 mismatched protocol → named refusal on both sides', await until(async () => /incompatible version/.test(await B.textContent('#roster')) && /incompatible version/.test(await E.textContent('#roster')), 45000));
   await E.close(); await D.close();
@@ -181,8 +260,22 @@ try {
   await M1.fill('#consoleIn', '/remove Mel'); await M1.press('#consoleIn', 'Enter');
   check('RT5 target is asked, can stay, and UI does not claim removal',
     await until(async () => /asked the room to disconnect you/.test(await M3.textContent('#overlayCard')), 15000)
-    && /Peers that ignore this stay connected/.test(await M1.textContent('#consoleOut')));
+    && /can ignore it/.test(await M1.textContent('#consoleOut')));
   await M3.click('#overlayCard button:has-text("Stay")');
+  check('RF9 other peers are asked and nothing is silently applied',
+    await until(async () => /asked you to disconnect/.test(await M2.textContent('#status')), 15000)
+    && await M2.evaluate(() => window.rtc.S.peers.size === 2));
+  await M2.click('#status button:has-text("Ignore")');
+  check('RF9 ignoring keeps the connection', await M2.evaluate(() => window.rtc.S.peers.size === 2) && !/asked you to disconnect/.test(await M2.textContent('#status')));
+  await M1.fill('#consoleIn', '/remove Mel'); await M1.press('#consoleIn', 'Enter');
+  await until(async () => /asked you to disconnect/.test(await M2.textContent('#status')), 15000);
+  await M2.click('#status button:has-text("Disconnect")');
+  check('RF9 agreeing disconnects that peer', await until(async () => /You disconnected Mel at/.test(await M2.textContent('#consoleOut')) && await M2.evaluate(() => window.rtc.S.removedLocal.size === 1), 15000));
+  // Observed: the library re-dials a closed pair within seconds. That must be shown, not hidden or re-applied.
+  await sleep(30000);
+  const reconnected = await M2.evaluate(() => [...window.rtc.S.peers.values()].filter((p) => p.name === 'Mel'));
+  check('RF9 a peer that reconnects after removal is labelled as such (and is not silently removed again)',
+    reconnected.length === 0 || (reconnected[0].reconnected && /reconnected after a request to disconnect them/.test(await M2.textContent('#roster'))), JSON.stringify(reconnected.map((p) => p.reconnected)));
   await M2.fill('#consoleIn', '/move all'); await M2.press('#consoleIn', 'Enter');
   const prompted = await until(async () => /The room is moving/.test(await M1.textContent('#overlayCard')), 15000);
   check('RT5 Move room invites chosen peers over the data channel', prompted);
@@ -270,6 +363,86 @@ try {
   }
   check('with addresses hidden by default, an active preview in both lets them connect', (await connectedReady(hp[0], 1)) && (await connectedReady(hp[1], 1)));
   await hiddenBrowser.close();
+
+  // --- RF13: observed hosts with STUN on ---------------------------------------------------------
+  const stunPg = await open('Stan', { url: ORIGIN + '/#k=' + 'T'.repeat(22), lan: false }); await join(stunPg);
+  await sleep(6000);
+  await stunPg.fill('#consoleIn', '/egress'); await stunPg.press('#consoleIn', 'Enter');
+  const egressText = await until(async () => { const t = await stunPg.textContent('#consoleOut'); return /OBSERVED/.test(t) && t; }, 10000);
+  check('RF13 STUN mode: observed hosts are all hosts you set', !!egressText && /every observed host is one you set/.test(egressText), (egressText || '').match(/stun\.cloudflare[^\s]*/)?.[0] || 'no STUN candidate observed (offline?)');
+  await stunPg.close();
+
+  // --- RF4: relays that accept the socket but do not work ------------------------------------------
+  for (const mode of ['drop', 'reject']) {
+    const bad = await startMockRelay({ mode });
+    const pg = await open(`Rel-${mode}`, { url: ORIGIN + '/#k=' + (mode === 'drop' ? 'D' : 'E').repeat(22), relays: bad.url });
+    await join(pg);
+    const shown = await until(async () => /connected but not passing messages/.test(await pg.textContent('#status')), 30000);
+    check(`RF4 relay that ${mode === 'drop' ? 'drops' : 'rejects'} events → "connected but not passing messages", never "no one here"`, shown && !/No one else is here yet/.test(await pg.textContent('#status')), (await pg.textContent('#status')).slice(0, 140));
+    await pg.close(); bad.close();
+  }
+
+  // --- RF3: an offer that never gets an answer is not "no one here" --------------------------------
+  const oneway = await startMockRelay({ mode: 'oneway' });
+  const owUrl = ORIGIN + '/#k=' + 'W'.repeat(22);
+  const OA = await open('Ola', { url: owUrl, relays: oneway.url }); await join(OA);
+  const OB = await open('Ole', { url: owUrl, relays: oneway.url }); await join(OB);
+  const trying = await until(async () => /Someone is trying to connect/.test(await OA.textContent('#status')), 25000);
+  const noAnswer = await until(async () => /\(no answer\)/.test(await OA.textContent('#status')), 45000);
+  check('RF3 offer without an answer: "Someone is trying…", then a named "no answer" failure', trying && noAnswer, (await OA.textContent('#status')).slice(0, 160));
+  check('RF3 never says "No one else is here yet" while someone is announcing', !/No one else is here yet/.test(await OA.textContent('#status')));
+  await OA.close(); await OB.close(); oneway.close();
+
+  // --- RF5 / RF6: a skewed, delayed joiner cannot take a seat from people already sending video -------
+  const seatUrl = ORIGIN + '/#k=' + 'V'.repeat(22);
+  const seatDev = { audioCap: 6, videoCap: 2 };
+  const V1 = await open('v1', { url: seatUrl, dev: seatDev }); await join(V1);
+  const V2 = await open('v2', { url: seatUrl, dev: seatDev }); await join(V2);
+  await connectedReady(V1, 1); await connectedReady(V2, 1);
+  for (const pg of [V1, V2]) { await pg.click('#btnCam'); await pg.waitForSelector('#preview'); await pg.click('#preview button.primary'); }
+  await until(() => V1.evaluate(() => window.rtc.S.sent.cam.size === 1), 20000);
+  relay.setDelay(8000);
+  const V3 = await open('v3', { url: seatUrl, dev: seatDev, clockShift: -60000 }); await join(V3);
+  await until(() => V3.evaluate(() => window.rtc.S.peers.size === 2), 120000);
+  await sleep(3000);
+  relay.setDelay(0);
+  const v1 = await V1.evaluate(() => ({ cam: !!window.rtc.S.my.cam, to: [...window.rtc.S.sent.cam.keys()].length, seated: window.rtc.seatOrder().indexOf(window.rtc.S.selfId) }));
+  const v2 = await V2.evaluate(() => ({ cam: !!window.rtc.S.my.cam, to: [...window.rtc.S.sent.cam.keys()].length }));
+  check('RF5 existing video senders keep their seats and keep sending', v1.cam && v2.cam && v1.to === 1 && v2.to === 1 && v1.seated < 2, JSON.stringify({ v1, v2 }));
+  check('RF6 no existing sender sees a "lost your seat" banner', !/lost your video seat/.test(await V1.textContent('#status')) && !/lost your video seat/.test(await V2.textContent('#status')));
+  await V3.click('#btnCam');
+  check('RF5 the slow-clock joiner is told video is full (and that seats go by join order)', await until(async () => /Video is full for this room/.test(await V3.textContent('#overlayCard')) && /even if their camera is off/.test(await V3.textContent('#overlayCard')), 10000));
+  // RF6: a sender who loses a seat is told. Simulate the flip on V1 by pinning another peer ahead.
+  await V1.evaluate(() => { const S = window.rtc.S; S.pinnedSelf = false; for (const p of S.peers.values()) p.pinned = true; });
+  check('RF6 losing a seat is announced, with a way to stop the camera', await until(async () => /You lost your video seat/.test(await V1.textContent('#status')) && /Camera: on, not sent/.test(await V1.textContent('#btnCam')) && /Not sending video: no video seat/.test(await V1.textContent('#qualityLine')), 10000), (await V1.textContent('#status')).slice(0, 120));
+  for (const pg of [V1, V2, V3]) await pg.close();
+
+  // --- RF10: two simultaneous joiners at the cap are never half-admitted ---------------------------
+  const capUrl2 = ORIGIN + '/#k=' + 'C'.repeat(22);
+  const capDev = { audioCap: 3, videoCap: 3 };
+  const members = [await open('cm1', { url: capUrl2, dev: capDev }), await open('cm2', { url: capUrl2, dev: capDev })];
+  for (const m of members) await join(m);
+  await connectedReady(members[0], 1); await connectedReady(members[1], 1);
+  const racers = await Promise.all([open('r1', { url: capUrl2, dev: capDev }), open('r2', { url: capUrl2, dev: capDev })]);
+  await Promise.all(racers.map((r) => r.click('#btnJoin')));
+  const everyone = [...members, ...racers];
+  const consistent = await until(async () => {
+    const st = await Promise.all(everyone.map((p) => p.evaluate(() => ({ left: !!window.rtc?.S?.left, peers: window.rtc?.S?.peers?.size ?? 0, pcs: [...window.rtc.allPCs].filter((pc) => pc.connectionState === 'connected').length }))));
+    const inRoom = st.filter((x) => !x.left);
+    return inRoom.length <= 3 && inRoom.length >= 2 && inRoom.every((x) => x.peers === inRoom.length - 1 && x.pcs === inRoom.length - 1) && st.filter((x) => x.left).every((x) => x.pcs === 0);
+  }, 90000);
+  check('RF10 simultaneous joiners at the cap end fully in or fully out, never half-admitted', consistent);
+  for (const p of everyone) await p.close();
+
+  // --- RF11: camera and screen both get a quality statement ------------------------------------------
+  const qa = await open('Qa', { url: ORIGIN + '/#k=' + 'Q2'.padEnd(22, 'q') }); await join(qa);
+  const qb = await open('Qb', { url: ORIGIN + '/#k=' + 'Q2'.padEnd(22, 'q') }); await join(qb);
+  await connectedReady(qa, 1);
+  await qa.click('#btnCam'); await qa.waitForSelector('#preview'); await qa.click('#preview button.primary');
+  await qa.click('#btnShare');
+  const both = await until(async () => /Sending \d+p to 1 person/.test(await qa.textContent('#qualityLine')) && /Sharing screen at \d+p to 1 person/.test(await qa.textContent('#qualityLine')), 30000);
+  check('RF11 camera and screen share each get a quality line', both, await qa.textContent('#qualityLine'));
+  await qa.close(); await qb.close();
 
   // --- RT18: unreachable relays ------------------------------------------------------
   const F = await open('Frank', { url: ORIGIN + '/#k=' + 'R'.repeat(22), relays: 'ws://127.0.0.1:1' });

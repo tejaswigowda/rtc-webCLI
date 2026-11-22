@@ -17,7 +17,8 @@ const entries = [
   {
     file: 'trystero-nostr.js',
     pkg: '@trystero-p2p/nostr',
-    contents: "export { joinRoom, getRelaySockets, defaultRelayUrls } from '@trystero-p2p/nostr';",
+    // schnorr is the signing primitive Trystero already bundles; the relay probe uses it to sign its test event.
+    contents: "export { joinRoom, getRelaySockets, defaultRelayUrls } from '@trystero-p2p/nostr'; export { schnorr } from '@noble/secp256k1';",
   },
   {
     file: 'qrcode.js',
