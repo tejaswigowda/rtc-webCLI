@@ -1,18 +1,18 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" role="img" aria-labelledby="t d" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
   <title id="t">Why rooms stay small</title>
   <desc id="d">In a mesh every person uploads one copy of their video to each other person, so uploads grow with room size. Provisional caps are 4 with video and 8 in total.</desc>
-  <rect width="900" height="380" fill="#0e1116"/>
+  <rect width="900" height="380" fill="#0d0f1a"/>
   <text x="200" y="34" text-anchor="middle" fill="#e6edf3" font-size="16" font-weight="600">4 people = 6 direct links</text>
   <g stroke="#3fb950" stroke-width="2.5">
     <line x1="90" y1="90" x2="310" y2="90"/><line x1="90" y1="300" x2="310" y2="300"/><line x1="90" y1="90" x2="90" y2="300"/><line x1="310" y1="90" x2="310" y2="300"/><line x1="90" y1="90" x2="310" y2="300"/><line x1="310" y1="90" x2="90" y2="300"/>
   </g>
-  <g fill="#1f2937" stroke="#58a6ff" stroke-width="2"><circle cx="90" cy="90" r="26"/><circle cx="310" cy="90" r="26"/><circle cx="90" cy="300" r="26"/><circle cx="310" cy="300" r="26"/></g>
+  <g fill="#1e2236" stroke="#58a6ff" stroke-width="2"><circle cx="90" cy="90" r="26"/><circle cx="310" cy="90" r="26"/><circle cx="90" cy="300" r="26"/><circle cx="310" cy="300" r="26"/></g>
   <g fill="#e6edf3" font-size="15" font-weight="600" text-anchor="middle"><text x="90" y="96">A</text><text x="310" y="96">B</text><text x="90" y="306">C</text><text x="310" y="306">D</text></g>
   <text x="200" y="352" text-anchor="middle" fill="#8b949e" font-size="13">each person uploads 3 copies of their video</text>
 
   <g transform="translate(470,0)">
     <text x="215" y="34" text-anchor="middle" fill="#e6edf3" font-size="16" font-weight="600">Copies each person uploads</text>
-    <line x1="30" y1="300" x2="420" y2="300" stroke="#2a313c"/>
+    <line x1="30" y1="300" x2="420" y2="300" stroke="#3a3f5c"/>
     <g fill="#58a6ff">
       <rect x="40" y="265" width="30" height="35" rx="3"/><rect x="95" y="230" width="30" height="70" rx="3"/><rect x="150" y="195" width="30" height="105" rx="3"/>
     </g>

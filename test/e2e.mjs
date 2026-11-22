@@ -297,7 +297,7 @@ try {
   await aboutPage.goto(`${ORIGIN}/about.html`);
   await aboutPage.waitForLoadState('networkidle');
   const broken = await aboutPage.evaluate(() => [...document.images].filter((i) => !i.complete || i.naturalWidth === 0).length);
-  check('About page makes no request outside the origin and no diagram is broken', broken === 0 && aboutReqs.every((u) => u.startsWith(ORIGIN)), aboutReqs.filter((u) => !u.startsWith(ORIGIN)).join(', '));
+  check('About page makes no request outside the origin and no diagram is broken', broken === 0 && aboutReqs.every((u) => u.startsWith(ORIGIN) || u.startsWith('data:')), aboutReqs.filter((u) => !u.startsWith(ORIGIN) && !u.startsWith('data:')).join(', '));
   await aboutPage.context().close();
 
   // --- RV2: /whoami answers only when it is certain ----------------------------------------------------------
@@ -420,6 +420,30 @@ try {
   const helloCounts = await Promise.all(guests.map((g) => g.evaluate(() => (document.querySelector('#consoleOut').textContent.match(/said hello/g) || []).length)));
   check('two people joining within seconds of each other do not loop on hello', helloCounts.every((n) => n >= 1 && n <= 2), JSON.stringify(helloCounts));
   for (const g of guests) await g.context().close();
+
+  // --- Small screens ---------------------------------------------------------------------------------------------
+  const phoneCtx = await browser.newContext({ viewport: { width: 360, height: 700 }, isMobile: true, hasTouch: true });
+  await phoneCtx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Mo', lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+  const mp = await phoneCtx.newPage();
+  const noOverflow = () => mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.body.scrollWidth <= innerWidth + 1);
+  await mp.goto(`${ORIGIN}/#k=${'M2'.padEnd(22, 'm')}`);
+  check('phone: landing has no horizontal scroll and the header shows the three icons', await noOverflow() && (await mp.$$('#top .help-nav .header-icon')).length === 3);
+  await mp.click('#btnJoin'); await mp.waitForSelector('#room:not(.hidden)');
+  const phone = await mp.evaluate(() => {
+    const vis = (sel) => { const e = document.querySelector(sel); return !!e && getComputedStyle(e).display !== 'none' && e.getBoundingClientRect().width > 0; };
+    const h = (sel) => document.querySelector(sel).getBoundingClientRect().height;
+    return { side: vis('#side'), panelBtn: vis('#btnPanel'), moreBtn: vis('#btnMore'), micLabel: vis('#btnMic .lbl'), micH: h('#btnMic'), leaveH: h('#btnLeave'), leaveOn: (() => { const r = document.querySelector('#btnLeave').getBoundingClientRect(); return r.right <= innerWidth && r.left >= 0; })() };
+  });
+  check('phone: video first, side panel hidden, icon-only 44px controls, Leave always on screen', !phone.side && phone.panelBtn && phone.moreBtn && !phone.micLabel && phone.micH >= 44 && phone.leaveH >= 44 && phone.leaveOn, JSON.stringify(phone));
+  await mp.click('#btnPanel');
+  check('phone: the chat button swaps the grid for roster and chat, and it fits the screen', await mp.evaluate(() => getComputedStyle(document.querySelector('#side')).display !== 'none' && getComputedStyle(document.querySelector('#stage')).display === 'none') && await noOverflow());
+  await mp.click('#btnPanel');
+  await mp.click('#btnMore');
+  check('phone: More opens layout and quality inside the screen', await mp.evaluate(() => { const r = document.querySelector('#moreCtl').getBoundingClientRect(); return r.width > 0 && r.left >= 0 && r.right <= innerWidth; }) && await noOverflow());
+  const aboutM = await phoneCtx.newPage();
+  await aboutM.goto(`${ORIGIN}/about.html`);
+  check('phone: About page has no horizontal scroll', await aboutM.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await phoneCtx.close();
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.

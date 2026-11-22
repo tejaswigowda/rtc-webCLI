@@ -4,17 +4,17 @@
   <defs>
     <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b949e"/></marker>
   </defs>
-  <rect width="900" height="470" fill="#0e1116"/>
+  <rect width="900" height="470" fill="#0d0f1a"/>
 
-  <rect x="190" y="24" width="420" height="108" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <rect x="190" y="24" width="420" height="108" rx="12" fill="#151827" stroke="#3a3f5c"/>
   <text x="400" y="50" text-anchor="middle" fill="#e6edf3" font-size="16" font-weight="600">Introduction relays (public Nostr)</text>
-  <g fill="#0d1117" stroke="#2a313c">
+  <g fill="#080a10" stroke="#3a3f5c">
     <rect x="212" y="66" width="68" height="28" rx="6"/><rect x="288" y="66" width="68" height="28" rx="6"/><rect x="364" y="66" width="68" height="28" rx="6"/><rect x="440" y="66" width="68" height="28" rx="6"/><rect x="516" y="66" width="68" height="28" rx="6"/>
   </g>
   <g fill="#8b949e" font-size="11" text-anchor="middle"><text x="246" y="85">relay</text><text x="322" y="85">relay</text><text x="398" y="85">relay</text><text x="474" y="85">relay</text><text x="550" y="85">relay</text></g>
   <text x="400" y="116" text-anchor="middle" fill="#8b949e" font-size="13">see a room hash and encrypted connection data. Never the secret, never media</text>
 
-  <rect x="690" y="40" width="170" height="76" rx="12" fill="#161b22" stroke="#2a313c"/>
+  <rect x="690" y="40" width="170" height="76" rx="12" fill="#151827" stroke="#3a3f5c"/>
   <text x="775" y="68" text-anchor="middle" fill="#e6edf3" font-size="16" font-weight="600">STUN server</text>
   <text x="775" y="92" text-anchor="middle" fill="#8b949e" font-size="13">tells a browser its</text>
   <text x="775" y="108" text-anchor="middle" fill="#8b949e" font-size="13">public address</text>
@@ -26,12 +26,12 @@
   <text x="236" y="196" fill="#58a6ff" font-size="13">encrypted offers and answers</text>
 
   <g>
-    <rect x="70" y="300" width="200" height="86" rx="12" fill="#1f2937" stroke="#58a6ff" stroke-width="2"/>
+    <rect x="70" y="300" width="200" height="86" rx="12" fill="#1e2236" stroke="#58a6ff" stroke-width="2"/>
     <text x="170" y="334" text-anchor="middle" fill="#e6edf3" font-size="17" font-weight="600">Browser A</text>
     <text x="170" y="358" text-anchor="middle" fill="#8b949e" font-size="13">room creator</text>
-    <rect x="350" y="300" width="200" height="86" rx="12" fill="#1f2937" stroke="#58a6ff" stroke-width="2"/>
+    <rect x="350" y="300" width="200" height="86" rx="12" fill="#1e2236" stroke="#58a6ff" stroke-width="2"/>
     <text x="450" y="334" text-anchor="middle" fill="#e6edf3" font-size="17" font-weight="600">Browser B</text>
-    <rect x="630" y="300" width="200" height="86" rx="12" fill="#1f2937" stroke="#58a6ff" stroke-width="2"/>
+    <rect x="630" y="300" width="200" height="86" rx="12" fill="#1e2236" stroke="#58a6ff" stroke-width="2"/>
     <text x="730" y="334" text-anchor="middle" fill="#e6edf3" font-size="17" font-weight="600">Browser C</text>
   </g>
 

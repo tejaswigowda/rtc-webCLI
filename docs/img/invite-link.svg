@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 330" role="img" aria-labelledby="t d" font-family="-apple-system,Segoe UI,Roboto,sans-serif">
   <title id="t">Anatomy of an invite link</title>
   <desc id="d">The part before the hash goes to the page server. The secret and creator hash after the hash never leave the browser.</desc>
-  <rect width="900" height="330" fill="#0e1116"/>
+  <rect width="900" height="330" fill="#0d0f1a"/>
   <text x="450" y="38" text-anchor="middle" fill="#e6edf3" font-size="18" font-weight="600">One link is the whole room</text>
 
   <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="20">
-    <rect x="30" y="62" width="840" height="52" rx="10" fill="#161b22" stroke="#2a313c"/>
+    <rect x="30" y="62" width="840" height="52" rx="10" fill="#151827" stroke="#3a3f5c"/>
     <text x="48" y="96" fill="#58a6ff">https://192.168.0.5:8443/</text>
     <text x="378" y="96" fill="#8b949e">#</text>
     <text x="396" y="96" fill="#d29922">k=</text>
@@ -21,13 +21,13 @@
   <path d="M378 124 L 378 142 L 868 142 L 868 124" fill="none" stroke="#8b949e" stroke-width="2"/>
   <text x="623" y="166" text-anchor="middle" fill="#e6edf3" font-size="14" font-weight="600">never sent anywhere: browsers keep everything after # local</text>
 
-  <rect x="396" y="206" width="290" height="96" rx="10" fill="#161b22" stroke="#d29922"/>
+  <rect x="396" y="206" width="290" height="96" rx="10" fill="#151827" stroke="#d29922"/>
   <text x="541" y="232" text-anchor="middle" fill="#d29922" font-size="14" font-weight="600">k = 128-bit room secret</text>
   <text x="541" y="254" text-anchor="middle" fill="#8b949e" font-size="12.5">SHA-256 of it = the room topic relays see</text>
   <text x="541" y="272" text-anchor="middle" fill="#8b949e" font-size="12.5">HKDF of it = key that encrypts the offers</text>
   <text x="541" y="290" text-anchor="middle" fill="#8b949e" font-size="12.5">a new room is a new secret</text>
 
-  <rect x="702" y="206" width="168" height="96" rx="10" fill="#161b22" stroke="#3fb950"/>
+  <rect x="702" y="206" width="168" height="96" rx="10" fill="#151827" stroke="#3fb950"/>
   <text x="786" y="232" text-anchor="middle" fill="#3fb950" font-size="14" font-weight="600">h = creator hash</text>
   <text x="786" y="254" text-anchor="middle" fill="#8b949e" font-size="12.5">lets everyone check</text>
   <text x="786" y="272" text-anchor="middle" fill="#8b949e" font-size="12.5">who really created</text>

@@ -77,6 +77,8 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 
 - **Device Control**: **Devices…** lists cameras, microphones and (where the browser allows it) speakers, with a microphone level meter and a speaker test sound. Changing the camera or microphone while live swaps the track on every connection without dropping the call. **Flip camera** cycles cameras on a phone. If a device is unplugged or taken by another app, the page says so and stops that stream. A blocked or busy camera gets plain-language help for each browser instead of a bare error. Your choices are remembered
 
+- **Works on a Phone**: the same header as the other webCLIs (logo, "peer-to-peer" and "No media server" tags, and book, info and GitHub icons), and the family colour palette. Every control is an icon with a label that collapses to the icon alone on small screens, with 44 px touch targets and Leave always on screen. On a phone the video grid is the main view; a chat button swaps it for the roster, chat and console, and a **More** button holds layout, send quality and Move room. Dialogs slide up from the bottom, inputs are sized so iOS does not zoom, and the screen's safe areas are respected. The About page is responsive too
+
 - **Layout**: tiles show who is speaking (a green outline, computed in your browser from each person's audio) and who is muted. **Grid** or **Speaker** layout; **Pin** (spotlight) any tile; **Full screen** on a tile (button or double-click); your own camera view can be mirrored (others always see it unmirrored)
 
 - **Hand, Reactions, Sounds, Timer**: raise or lower a hand (a hand on your tile, a line in chat, a soft sound); send a reaction (👍 👏 ❤️ 😂 😮 🎉) that floats over your tile; soft sounds for new messages, hands, joins and leaves (can be turned off); a timer shows how long you have been in the room; the tab title shows unread messages
@@ -121,7 +123,7 @@ Under **Network settings**: LAN only (no STUN), the STUN server, your own TURN s
 The first time, you are told that others in the room can see your IP address. You join with camera and microphone off.
 
 ### ◉ 4 · Turn Things On
-**Camera** and **Mic** open a local preview. Press **Send to the room** to publish, or **Cancel** to release the device. **Share screen** uses the browser's own picker. Screen audio is offered only where the browser supports it.
+**Camera** and **Mic** (the icons at the bottom) open a local preview. Press **Send to the room** to publish, or **Cancel** to release the device. **Share screen** uses the browser's own picker. Screen audio is offered only where the browser supports it.
 
 ### ✎ 5 · Watch the Roster
 The roster shows each person, how you are connected (direct or relay), what they receive from you, and what they send you. Failures to connect appear there too, with the reason and what each side offered, and in the console. They are not repeated as a banner.
@@ -324,6 +326,7 @@ npx playwright install chromium    # first time only
 | Same network | with addresses hidden: two windows connect when served by `server.js`; on a static host they do not connect until the microphone is allowed, the failure names `.local`, and they then connect without a reload; the server serves https and a plain-http LAN visit links to it | `npm test`; **phones and real routers not yet tested** |
 | `/whoami` | answers only when certain: direct LAN caller, loopback with a local `Host`; null behind a tunnel, with a forwarding header, or for a public or Docker caller (RV2). A static host never sees `/whoami` or `/lan.json` (RV5). The local address chosen prefers 192.168, then 10, then 172.16–31, never Docker's bridge first (RV8) | `npm test` |
 | About page | static, no scripts, every diagram loads, no request leaves the origin | `npm test` |
+| Small screens | on a 360 px phone: no horizontal scroll (landing, About, room, chat panel, More), three header icons, icon-only 44 px controls with Leave on screen, chat button swaps grid and panel | `npm test` (Chromium touch emulation); **real phones and Safari not tested** |
 | Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
 | Recording | creator-only button; a non-creator is refused; everyone is told and told again when it stops; a claim from a non-creator is ignored; the saved file is non-empty | `npm test`; **late-joiner notice and long-recording memory use not yet tested** |
 
