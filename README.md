@@ -1,7 +1,5 @@
 # rtc webCLI
 
-[![GitHub stars](https://img.shields.io/github/stars/tejaswigowda/rtc-webCLI?style=social)](https://github.com/tejaswigowda/rtc-webCLI/stargazers)
-
 A browser-based room for audio, video and screen share, opened with an invite link. **Link in, live call out.** <b><ins>No accounts, and no media server of ours. Audio, video and screen go directly between participants</ins></b> (unless you add your own TURN server), encrypted, using WebRTC and [Trystero](https://github.com/dmotz/trystero) for introductions.
 
 <img src="demo.png" alt="rtc-webCLI in a call" width="100%">
