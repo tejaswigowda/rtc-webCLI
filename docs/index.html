@@ -53,6 +53,23 @@
   .tile .avatar { font-size:42px; color:var(--dim); }
   .tile .label { position:absolute; left:6px; bottom:6px; background:rgba(0,0,0,.65); border-radius:4px; padding:2px 6px; font-size:12px; max-width:90%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .tile .badge { position:absolute; right:6px; top:6px; background:rgba(0,0,0,.65); border-radius:4px; padding:2px 6px; font-size:11px; color:var(--warn); }
+  .tile.speaking { outline:3px solid var(--ok); outline-offset:-3px; }
+  .tile .tools { position:absolute; left:6px; top:6px; display:none; gap:4px; z-index:2; }
+  .tile:hover .tools, .tile:focus-within .tools { display:flex; }
+  @media (hover:none) { .tile .tools { display:flex; } }
+  .tbtn { padding:1px 6px; font-size:12px; background:rgba(0,0,0,.65); }
+  .tile.pinned .tbtn.pin { border-color:var(--acc); }
+  .tile .hand { position:absolute; right:6px; bottom:6px; font-size:22px; }
+  .tile .mutedtag { color:var(--warn); }
+  .tile video.mirror { transform:scaleX(-1); }
+  #tiles.focused { grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); }
+  #tiles.focused .tile.focus { grid-column:1 / -1; aspect-ratio:auto; height:min(60vh,56vw); }
+  .float { position:absolute; left:50%; bottom:16%; font-size:42px; animation:rise 3s ease-out forwards; pointer-events:none; z-index:3; }
+  @keyframes rise { from { transform:translate(-50%,0); opacity:1; } to { transform:translate(-50%,-140px); opacity:0; } }
+  #reactMenu { position:fixed; bottom:56px; left:50%; transform:translateX(-50%); background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:6px; display:flex; gap:4px; z-index:40; }
+  #reactMenu button { font-size:20px; padding:2px 8px; }
+  .meter { height:10px; background:#0d1117; border:1px solid var(--line); border-radius:5px; overflow:hidden; }
+  .meter > div { height:100%; width:0; background:var(--ok); transition:width .08s; }
   #preview { margin:0 12px 12px; }
   #preview video { width:100%; max-width:420px; border-radius:8px; background:#000; display:block; margin-bottom:8px; }
   #side { border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; background:var(--panel); }
@@ -172,6 +189,7 @@
     <span class="title">rtc-webCLI</span>
     <span class="dim" id="roomInfo"></span>
     <span class="grow" style="flex:1"></span>
+    <span class="dim mono" id="timer" title="Time since you joined"></span>
     <span class="dim mono" id="rt4check"></span>
     <button id="btnInvite">Copy invite</button>
     <button id="btnQr">QR</button>
@@ -203,9 +221,15 @@
     <button id="btnMic">Mic: off</button>
     <button id="btnCam">Camera: off</button>
     <button id="btnShare">Share screen</button>
+    <button id="btnFlip" class="hidden" title="Switch to the next camera">Flip camera</button>
     <button id="btnRec" class="hidden">Record</button>
+    <button id="btnHand" title="Raise or lower your hand">✋ Raise hand</button>
+    <button id="btnReact" title="Send a reaction">😀 React</button>
+    <button id="btnDevices" title="Choose camera, microphone and speaker; test them">Devices…</button>
     <span id="why"></span>
     <span class="grow"></span>
+    <label class="dim" for="selLayout">Layout</label>
+    <select id="selLayout" style="width:auto"><option value="grid">Grid</option><option value="speaker">Speaker</option></select>
     <label class="dim" for="selRes">Send quality</label>
     <select id="selRes" style="width:auto">
       <option value="auto">Auto</option>
@@ -219,6 +243,7 @@
   </div>
 </div>
 
+<div id="reactMenu" class="hidden"></div>
 <div id="overlay" class="hidden"><div class="card" id="overlayCard"></div></div>
 
 <script type="module">
@@ -226,7 +251,7 @@
 // Constants
 // ---------------------------------------------------------------------------
 const PINS = /*PINS*/{"trystero-nostr.js":{"version":"0.27.0","sha256":"e38ca0a153946e0d209d895948a7dc6e1dcb7003ea6ae495d75cec42041f1c54","package":"@trystero-p2p/nostr"},"qrcode.js":{"version":"1.5.2","sha256":"065509cfd450f89dbffccc8e37d16f5cb03099aef7c36ab2a23d27611bd97b03","package":"qrcode-generator"}}/*END-PINS*/;
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const APP_ID = 'rtc-webCLI';
 const TOPIC_LABEL = 'rtc-webCLI/v1/topic';
 const SDP_LABEL = 'rtc-webCLI/v1/sdp';
@@ -254,7 +279,7 @@ const DEV = (() => {
   if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return {};
   try { return JSON.parse(localStorage.getItem('rtc.dev') || '{}'); } catch { return {}; }
 })();
-const PROTOCOL = DEV.protocol ?? 2;
+const PROTOCOL = DEV.protocol ?? 3;
 const audioCap = DEV.audioCap ?? AUDIO_CAP;
 const videoCap = DEV.videoCap ?? VIDEO_CAP;
 
@@ -411,7 +436,7 @@ const inviteUrl = (secret, h = parseHostHash()) => inviteBase + '#k=' + b64u.enc
 const settings = (() => {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
-  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', ...s };
+  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', camId: '', micId: '', spkId: '', mirror: true, sounds: true, layout: 'grid', ...s };
 })();
 const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 // ws:// would put the room topic and your IP on the network in plaintext, so it is accepted for loopback only.
@@ -450,6 +475,7 @@ async function loadVerified(file) {
 // Overlay screens
 // ---------------------------------------------------------------------------
 function showScreen({ title, body, actions = [], node }) {
+  stopMicTest();
   const card = $('#overlayCard');
   card.replaceChildren(el('h2', { text: title }));
   if (body) for (const para of [].concat(body)) card.append(el('p', { text: para }));
@@ -592,7 +618,7 @@ const S = {
   draft: { cam: null, mic: null },
   allTracks: new Set(), trackKind: new Map(),
   hostHash: null, hostKey: null, isCreator: false, selfP: null,
-  pinnedSelf: false, firstHelloAt: 0, seenKeys: new Map(), othersSince: null, noAnswerReported: false,
+  hand: false, pinned: null, speaker: null, speakerUntil: 0, wake: null, pinnedSelf: false, firstHelloAt: 0, seenKeys: new Map(), othersSince: null, noAnswerReported: false,
   requests: [], removedLocal: new Map(), seatLostLogged: false, outHeights: {},
   chat: { msgs: [], rendered: 0, unread: 0, tab: 'chat', toSig: '' },
   actions: {}, level: 720, pendingLevel: null, pendingCount: 0, resPref: 'auto',
@@ -668,13 +694,15 @@ async function joinFlow() {
   const ctl = S.room.makeAction('ctl');
   const chat = S.room.makeAction('chat');
   const rec = S.room.makeAction('rec');
-  S.actions = { hello, state, ctl, chat, rec };
+  const react = S.room.makeAction('react');
+  S.actions = { hello, state, ctl, chat, rec, react };
 
   hello.onMessage((m, ctx) => onHello(ctx.peerId, m));
   state.onMessage((m, ctx) => onState(ctx.peerId, m));
   ctl.onMessage((m, ctx) => onCtl(ctx.peerId, m));
   chat.onMessage((m, ctx) => onChat(ctx.peerId, m));
   rec.onMessage((m, ctx) => onRec(ctx.peerId, m));
+  react.onMessage((m, ctx) => onReact(ctx.peerId, m));
 
   S.room.onPeerJoin(({ peerId }) => onPeerJoin(peerId));
   S.room.onPeerLeave(({ peerId }) => onPeerLeave(peerId));
@@ -687,6 +715,11 @@ async function joinFlow() {
   setInterval(pollStats, 2500);
   runProbes();
   setInterval(runProbes, PROBE_EVERY_MS);
+  setInterval(sampleLevels, 150);
+  listDevices();
+  navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
+  acquireWakeLock();
+  $('#selLayout').value = settings.layout;
   render();
 }
 
@@ -695,7 +728,7 @@ const hostOf = (u) => { try { return new URL(u.replace(/^turns?:/, 'http://')).h
 function onPeerJoin(peerId) {
   const p = {
     id: peerId, name: '', proto: null, ver: null, joinedAt: 0, hello: false, helloTimedOut: false,
-    state: { cam: false, mic: false, micMuted: false, screen: false, screenAudio: false },
+    state: { cam: false, mic: false, micMuted: false, screen: false, screenAudio: false, hand: false },
     streams: {}, joinedLocal: Date.now(), stats: null, path: null,
   };
   if (S.removedLocal.has(peerId)) {
@@ -715,7 +748,10 @@ function onPeerLeave(peerId) {
   if (!p) return;
   log(`${displayName(peerId)} left.`);
   for (const kind of Object.keys(S.sent)) S.sent[kind].delete(peerId);
+  unwatchLevel(peerId);
+  if (S.pinned === peerId) S.pinned = null;
   S.requests = S.requests.filter((x) => x.target !== peerId && x.from !== peerId);
+  chime('leave');
   if (p.recording) chatSystem(`${displayName(peerId)} left, so their recording ended.`, true);
   S.peers.delete(peerId);
   document.querySelectorAll(`[data-peer="${CSS.escape(peerId)}"]`).forEach((n) => n.remove());
@@ -734,7 +770,7 @@ function sendState(target) {
   const m = S.my;
   S.actions.state?.send({
     cam: !!m.cam, mic: !!m.mic, micMuted: !!(m.mic && !m.mic.getAudioTracks()[0]?.enabled),
-    screen: !!m.screen, screenAudio: !!m.screen?.getAudioTracks().length,
+    screen: !!m.screen, screenAudio: !!m.screen?.getAudioTracks().length, hand: !!S.hand,
   }, target ? { target } : undefined).catch(() => {});
 }
 
@@ -762,6 +798,7 @@ async function onHello(peerId, m) {
       sendHello();
     }
     log(`${displayName(peerId)} said hello (unverified name).`);
+    if (!p.greeted) { p.greeted = true; chime('join'); }
   }
   applyRec(p);
   reconcile();
@@ -772,7 +809,9 @@ function onState(peerId, m) {
   const p = S.peers.get(peerId);
   if (!p || !m || typeof m !== 'object') return;
   const wasSending = p.state.cam || p.state.screen;
-  p.state = { cam: !!m.cam, mic: !!m.mic, micMuted: !!m.micMuted, screen: !!m.screen, screenAudio: !!m.screenAudio };
+  const handWas = !!p.state.hand;
+  p.state = { cam: !!m.cam, mic: !!m.mic, micMuted: !!m.micMuted, screen: !!m.screen, screenAudio: !!m.screenAudio, hand: !!m.hand };
+  if (p.state.hand && !handWas) { chatSystem(`${displayName(peerId)} raised their hand.`); chime('hand'); }
   if (p.state.cam || p.state.screen) { if (!wasSending && !p.pinned) p.pinned = seated(peerId); } else p.pinned = false;
   for (const kind of ['cam', 'mic', 'screen']) if (!p.state[kind]) detachRemote(p, kind);
   scheduleRender();
@@ -818,6 +857,7 @@ function onLocalTrackEnded(kind, track) {
   if (live && live.getTracks().includes(track) && live.getVideoTracks().every((t) => t.readyState === 'ended')) {
     if (kind === 'screen' || kind === 'cam') stopKind(kind, 'ended by the browser or device');
   }
+  if (kind === 'mic' && live && live.getAudioTracks().every((t) => t.readyState === 'ended')) stopKind('mic', 'stopped: the microphone was unplugged or taken by another app');
 }
 
 function reconcile() {
@@ -878,21 +918,67 @@ function mediaAvailable() {
   return true;
 }
 
+// Camera and microphone constraints, honouring the device chosen in Devices… (falling back if it has gone).
+function mediaConstraints(kind, useSaved = true) {
+  const id = useSaved ? (kind === 'cam' ? settings.camId : settings.micId) : '';
+  const dev = id ? { deviceId: { exact: id } } : {};
+  return kind === 'cam'
+    ? { video: { ...dev, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } }
+    : { audio: { ...dev, echoCancellation: true, noiseSuppression: true } };
+}
+
+async function openDevice(kind) {
+  try {
+    return await navigator.mediaDevices.getUserMedia(mediaConstraints(kind));
+  } catch (e) {
+    const saved = kind === 'cam' ? settings.camId : settings.micId;
+    if (saved && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) {
+      if (kind === 'cam') settings.camId = ''; else settings.micId = '';
+      saveSettings();
+      log(`The ${kind === 'cam' ? 'camera' : 'microphone'} you chose is not available; using the default.`, 'err');
+      return navigator.mediaDevices.getUserMedia(mediaConstraints(kind, false));
+    }
+    throw e;
+  }
+}
+
+// Plain-language help for the errors people actually hit.
+function explainMediaError(e, kind) {
+  const what = kind === 'cam' ? 'camera' : 'microphone';
+  switch (e && e.name) {
+    case 'NotAllowedError':
+    case 'SecurityError':
+      return { title: `The browser blocked your ${what}`, body: [
+        `Permission for the ${what} was denied, either just now or earlier for this site.`,
+        'Chrome and Edge: click the lock or tune icon left of the address, set Camera and Microphone to Allow, then reload. Firefox: click the permissions icon left of the address and clear the block. Safari: Safari menu → Settings for this website. On a phone, also check the system Settings app for the browser.',
+        'Nothing was sent anywhere. The page only asks when you press the button.'] };
+    case 'NotFoundError':
+    case 'OverconstrainedError':
+      return { title: `No ${what} found`, body: [`The browser cannot see a ${what}. Plug one in or check that it is not disabled, then try again. You can pick a different device under Devices….`] };
+    case 'NotReadableError':
+    case 'AbortError':
+      return { title: `Your ${what} is busy`, body: [`Another app or tab is using the ${what}, or the system refused to open it. Close the other app (a video call, a recorder) and try again.`] };
+    default:
+      return { title: `Could not start the ${what}`, body: [String((e && e.message) || e)] };
+  }
+}
+
 async function startPreview(kind) {
   if (!mediaAvailable()) return;
   if (kind === 'cam' && !iHaveVideoSeat()) { refuseVideo(); return; }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia(kind === 'cam'
-      ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } }
-      : { audio: { echoCancellation: true, noiseSuppression: true } });
+    const stream = await openDevice(kind);
     const track = kind === 'cam' ? stream.getVideoTracks()[0] : stream.getAudioTracks()[0];
     S.allTracks.add(track);
     S.draft[kind]?.stop();
     S.draft[kind] = track;
     renderPreview();
+    listDevices();
     log(`${kind === 'cam' ? 'Camera' : 'Microphone'} preview is on locally. Nobody receives it until you send it. Use /send or /cancel.`);
   } catch (e) {
     log(`Could not start ${kind === 'cam' ? 'camera' : 'microphone'}: ${e.message}`, 'err');
+    const x = explainMediaError(e, kind);
+    showScreen({ title: x.title, body: x.body, actions: [{ label: 'OK' }] });
   }
 }
 
@@ -934,6 +1020,7 @@ function sendDraft() {
   }
   renderPreview();
   updateSelfPin();
+  if (S.my.mic) watchLevel('self', S.my.mic);
   sendState();
   reconcile();
   renderSelfTiles();
@@ -945,6 +1032,7 @@ function stopKind(kind, why = 'stopped') {
   const stream = S.my[kind];
   if (!stream) return;
   S.my[kind] = null;
+  if (kind === 'mic') unwatchLevel('self');
   updateSelfPin();
   reconcile();
   stream.getTracks().forEach((t) => t.stop());
@@ -1004,6 +1092,10 @@ function tileFor(key, peerId, label, cls = '') {
     t = el('div', { class: 'tile ' + cls, 'data-tile': key });
     if (peerId) t.setAttribute('data-peer', peerId);
     t.append(el('div', { class: 'avatar', text: '' }), el('div', { class: 'label', text: label }));
+    t.append(el('div', { class: 'tools' },
+      el('button', { class: 'tbtn pin', type: 'button', title: 'Pin this tile (spotlight)', text: '📌', onclick: () => togglePin(key) }),
+      el('button', { class: 'tbtn', type: 'button', title: 'Full screen', text: '⤢', onclick: () => goFullscreen(t) })));
+    t.addEventListener('dblclick', () => goFullscreen(t));
     $('#tiles').append(t);
   }
   t.querySelector('.label').textContent = label;
@@ -1018,6 +1110,7 @@ function setTileVideo(tile, stream, muted) {
     tile.prepend(v);
   }
   v.muted = muted;
+  if (!muted) applySink(v);
   if (v.srcObject !== stream) v.srcObject = stream;
   v.play?.().catch(() => {});
   tile.querySelector('.avatar').classList.add('hidden');
@@ -1027,8 +1120,10 @@ function attachRemote(p, kind, stream) {
   if (kind === 'mic') {
     let a = document.querySelector(`audio[data-peer="${CSS.escape(p.id)}"][data-kind="mic"]`);
     if (!a) { a = el('audio', { autoplay: '', 'data-peer': p.id, 'data-kind': 'mic' }); document.body.append(a); }
+    applySink(a);
     a.srcObject = stream;
     a.play?.().catch(() => log('Your browser blocked audio playback; click anywhere on the page.', 'err'));
+    watchLevel(p.id, stream);
     return;
   }
   const key = kind === 'screen' ? p.id + ':screen' : p.id;
@@ -1040,6 +1135,7 @@ function detachRemote(p, kind) {
   delete p.streams[kind];
   if (kind === 'mic') {
     document.querySelector(`audio[data-peer="${CSS.escape(p.id)}"][data-kind="mic"]`)?.remove();
+    unwatchLevel(p.id);
     return;
   }
   const key = kind === 'screen' ? p.id + ':screen' : p.id;
@@ -1049,8 +1145,11 @@ function detachRemote(p, kind) {
 }
 
 function renderSelfTiles() {
-  const t = tileFor('self', null, `You (${myName()})`);
+  const micTag = S.my.mic && !S.my.mic.getAudioTracks()[0]?.enabled ? ' · muted' : '';
+  const t = tileFor('self', null, `You (${myName()})${micTag}`);
   setTileVideo(t, S.my.cam, true);
+  t.querySelector('video')?.classList.toggle('mirror', !!settings.mirror);
+  setHandBadge(t, S.hand);
   const sc = document.querySelector('[data-tile="self:screen"]');
   if (S.my.screen) setTileVideo(tileFor('self:screen', null, 'Your screen (as sent)', 'screen'), S.my.screen, true);
   else sc?.remove();
@@ -1058,7 +1157,8 @@ function renderSelfTiles() {
 
 function renderPeerTiles() {
   for (const p of S.peers.values()) {
-    const t = tileFor(p.id, p.id, displayName(p.id));
+    const t = tileFor(p.id, p.id, displayName(p.id) + (p.state.mic && p.state.micMuted ? ' · muted' : ''));
+    setHandBadge(t, p.state.hand);
     let badge = t.querySelector('.badge');
     const msg = !p.hello ? 'no hello yet' : p.proto !== PROTOCOL ? 'incompatible version' : !seated(p.id) ? 'audio only (video limit)' : '';
     if (msg) {
@@ -1068,6 +1168,7 @@ function renderPeerTiles() {
     const av = t.querySelector('.avatar');
     av.textContent = (displayName(p.id)[0] || '?').toUpperCase();
   }
+  applyLayout();
 }
 
 // ---------------------------------------------------------------------------
@@ -1261,6 +1362,12 @@ function renderStatus() {
     msgs.push({ cls: 'warn', text: `${displayName(rq.from)} (unverified name) asked you to disconnect ${displayName(rq.target)}. You can ignore this.`, actions: [
       { label: 'Disconnect', fn: () => resolveRequest(rq, true) }, { label: 'Ignore', fn: () => resolveRequest(rq, false) }] });
   }
+  if (!navigator.onLine) msgs.push({ cls: 'warn', text: "You're offline. The call picks up again by itself when the network is back." });
+  for (const r of rosterRows()) {
+    if (r.p && r.p.wasConnected && r.pc && (r.pc.connectionState === 'disconnected' || r.pc.connectionState === 'failed')) {
+      msgs.push({ cls: 'warn', text: `Connection to ${displayName(r.id)} dropped (${r.pc.connectionState}). Reconnecting…` });
+    }
+  }
   if ((S.my.cam || S.my.screen) && !iHaveVideoSeat()) {
     msgs.push({ cls: 'warn', text: `You lost your video seat, so your ${S.my.cam && S.my.screen ? 'camera and screen are' : S.my.cam ? 'camera is' : 'screen is'} on but nobody receives ${S.my.cam && S.my.screen ? 'them' : 'it'}. Seats are held by the first ${videoCap} people to join, and a joiner's clock can reorder them.`, actions: [
       ...(S.my.cam ? [{ label: 'Stop camera', fn: () => stopKind('cam') }] : []), ...(S.my.screen ? [{ label: 'Stop sharing', fn: () => stopKind('screen') }] : [])] });
@@ -1380,6 +1487,9 @@ function peerSendingSummary(p) {
 }
 
 function renderControls() {
+  $('#btnHand').textContent = S.hand ? '✋ Lower hand' : '✋ Raise hand';
+  $('#btnHand').className = S.hand ? 'warn' : '';
+  $('#btnFlip').classList.toggle('hidden', !(S.my.cam && devs.video.length > 1));
   const rb = $('#btnRec');
   rb.classList.toggle('hidden', !S.isCreator);
   rb.textContent = REC.on ? `Stop recording (${recElapsed()})` : 'Record';
@@ -1414,7 +1524,7 @@ function render() {
   $('#rt4check').textContent = chk.ok ? `roster ✓ ${chk.receivers} receiving` : `⚠ mismatch: ${chk.missing.length} receiving connection(s) not shown in the roster`;
   const n = S.peers.size + 1;
   $('#roomInfo').dataset.n = n;
-  document.title = `${REC.on || recordingPeers().length ? '● REC · ' : ''}rtc-webCLI · ${n} here`;
+  document.title = `${S.chat.unread ? `(${S.chat.unread}) ` : ''}${REC.on || recordingPeers().length ? '● REC · ' : ''}rtc-webCLI · ${n} here`;
 }
 
 let renderQueued = false;
@@ -1429,6 +1539,9 @@ function tick() {
   watchConnectTimeouts();
   watchRelayTraffic();
   noAnswerWatch();
+  for (const r of S.room ? Object.entries(S.room.getPeers()) : []) { const q = S.peers.get(r[0]); if (q && r[1].connection?.connectionState === 'connected') q.wasConnected = true; }
+  const secs = Math.floor((Date.now() - S.joinStart) / 1000);
+  $('#timer').textContent = `in room ${secs >= 3600 ? Math.floor(secs / 3600) + ':' : ''}${String(Math.floor(secs / 60) % 60).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
   for (const pc of [...allPCs]) if (pcClosed(pc)) allPCs.delete(pc);
   for (const p of S.peers.values()) {
     if (!p.hello && !p.helloTimedOut && Date.now() - p.joinedLocal > HELLO_TIMEOUT_MS) {
@@ -1682,7 +1795,7 @@ function onChat(peerId, m) {
   const text = m.text.trim().slice(0, CHAT_MAX);
   if (!text) return;
   S.chat.msgs.push({ from: peerId, name: displayName(peerId), creator: !!p.isHost, text, dm: !!m.dm, ts: now });
-  if (S.chat.tab !== 'chat') S.chat.unread++;
+  if (S.chat.tab !== 'chat' || document.hidden) { S.chat.unread++; chime('chat'); }
   renderChat();
 }
 
@@ -1962,6 +2075,294 @@ const recordingPeers = () => [...S.peers.values()].filter((p) => p.recording);
 const recElapsed = () => { const s = Math.floor((Date.now() - REC.startedAt) / 1000); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 
 // ---------------------------------------------------------------------------
+// Devices: choose and test camera, microphone and speaker; switch while live.
+// ---------------------------------------------------------------------------
+const devs = { video: [], audio: [], out: [] };
+
+async function listDevices() {
+  if (!navigator.mediaDevices?.enumerateDevices) return;
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    devs.video = all.filter((d) => d.kind === 'videoinput');
+    devs.audio = all.filter((d) => d.kind === 'audioinput');
+    devs.out = all.filter((d) => d.kind === 'audiooutput');
+    scheduleRender();
+  } catch { /* no permission to list */ }
+}
+
+function onDeviceChange() {
+  listDevices().then(() => log('A camera, microphone or speaker was added or removed.'));
+}
+
+function applySink(mediaEl) {
+  if (settings.spkId && typeof mediaEl.setSinkId === 'function') mediaEl.setSinkId(settings.spkId).catch(() => {});
+}
+function applySinkEverywhere() {
+  document.querySelectorAll('audio[data-kind], #tiles video').forEach((m) => { if (!m.muted) applySink(m); });
+}
+
+async function switchDevice(kind, id) {
+  if (kind === 'cam') settings.camId = id; else settings.micId = id;
+  saveSettings();
+  if (S.draft[kind]) { await startPreview(kind); return; }
+  const live = S.my[kind];
+  if (!live) return;
+  const old = live.getTracks()[0];
+  try {
+    const stream = await openDevice(kind);
+    const next = kind === 'cam' ? stream.getVideoTracks()[0] : stream.getAudioTracks()[0];
+    next.enabled = old.enabled;
+    S.allTracks.add(next);
+    S.trackKind.set(next.id, S.trackKind.get(old.id));
+    next.addEventListener('ended', () => onLocalTrackEnded(kind, next));
+    for (const pc of allPCs) for (const snd of pc.getSenders()) if (snd.track === old) await snd.replaceTrack(next).catch(() => {});
+    live.removeTrack(old);
+    live.addTrack(next);
+    old.stop();
+    if (kind === 'mic') watchLevel('self', live);
+    renderSelfTiles();
+    listDevices();
+    log(`${kind === 'cam' ? 'Camera' : 'Microphone'} switched without interrupting the call.`);
+  } catch (e) {
+    const x = explainMediaError(e, kind);
+    log(`Could not switch ${kind === 'cam' ? 'camera' : 'microphone'}: ${e.message}`, 'err');
+    showScreen({ title: x.title, body: x.body, actions: [{ label: 'OK' }] });
+  }
+}
+
+async function flipCamera() {
+  if (!S.my.cam || devs.video.length < 2) { log('Flip needs a live camera and at least two cameras.', 'err'); return; }
+  const cur = S.my.cam.getVideoTracks()[0]?.getSettings().deviceId;
+  const i = devs.video.findIndex((d) => d.deviceId === cur);
+  await switchDevice('cam', devs.video[(i + 1) % devs.video.length].deviceId);
+}
+
+let micTest = null;
+function stopMicTest() {
+  if (!micTest) return;
+  clearInterval(micTest.timer);
+  micTest.stream.getTracks().forEach((t) => t.stop());
+  try { micTest.src.disconnect(); } catch {}
+  micTest = null;
+}
+async function startMicTest(meter) {
+  stopMicTest();
+  const stream = await navigator.mediaDevices.getUserMedia(mediaConstraints('mic'));
+  S.allTracks.add(stream.getAudioTracks()[0]);
+  const ctx = audioCtx();
+  const an = ctx.createAnalyser();
+  an.fftSize = 512;
+  const src = ctx.createMediaStreamSource(stream);
+  src.connect(an);
+  const buf = new Uint8Array(an.fftSize);
+  micTest = { stream, src, timer: setInterval(() => {
+    an.getByteTimeDomainData(buf);
+    let sum = 0;
+    for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
+    meter.firstChild.style.width = Math.min(100, Math.round(Math.sqrt(sum / buf.length) * 300)) + '%';
+  }, 80) };
+}
+
+async function testSpeaker() {
+  const ctx = new AudioContext();
+  const dest = ctx.createMediaStreamDestination();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.value = 523;
+  gain.gain.value = 0.15;
+  osc.connect(gain).connect(dest);
+  const a = new Audio();
+  a.srcObject = dest.stream;
+  applySink(a);
+  osc.start();
+  await a.play().catch(() => {});
+  setTimeout(() => { osc.stop(); a.pause(); ctx.close(); }, 700);
+}
+
+async function openDevices() {
+  await listDevices();
+  const noLabels = [...devs.video, ...devs.audio].some((d) => !d.label);
+  const pick = (list, cur, what, onpick) => {
+    const sel = el('select');
+    sel.append(el('option', { value: '', text: 'Default' }));
+    list.forEach((d, i) => sel.append(el('option', { value: d.deviceId, text: d.label || `${what} ${i + 1}` })));
+    sel.value = list.some((d) => d.deviceId === cur) ? cur : '';
+    sel.onchange = () => onpick(sel.value);
+    return sel;
+  };
+  const meter = el('div', { class: 'meter' }, el('div'));
+  const micBtn = el('button', { type: 'button', text: 'Test microphone', onclick: async () => {
+    if (micTest) { stopMicTest(); micBtn.textContent = 'Test microphone'; meter.firstChild.style.width = '0'; return; }
+    try { await startMicTest(meter); micBtn.textContent = 'Stop test'; } catch (e) { const x = explainMediaError(e, 'mic'); log(`Mic test failed: ${e.message}`, 'err'); showScreen({ title: x.title, body: x.body, actions: [{ label: 'OK' }] }); }
+  } });
+  const form = el('div');
+  form.append(el('label', { class: 'dim', text: 'Camera' }), pick(devs.video, settings.camId, 'Camera', (id) => switchDevice('cam', id)));
+  form.append(el('label', { class: 'dim', text: 'Microphone' }), pick(devs.audio, settings.micId, 'Microphone', (id) => switchDevice('mic', id)));
+  if (typeof HTMLMediaElement.prototype.setSinkId === 'function') {
+    form.append(el('label', { class: 'dim', text: 'Speaker' }), pick(devs.out, settings.spkId, 'Speaker', (id) => { settings.spkId = id; saveSettings(); applySinkEverywhere(); }));
+    form.append(el('p', {}, el('button', { type: 'button', text: 'Play test sound', onclick: testSpeaker })));
+  } else form.append(el('p', { class: 'dim', text: "Your browser doesn't let a page choose the speaker; use the system sound settings." }));
+  form.append(el('p', {}, micBtn), meter);
+  const mirror = el('input', { type: 'checkbox' }); mirror.checked = settings.mirror;
+  mirror.onchange = () => { settings.mirror = mirror.checked; saveSettings(); renderSelfTiles(); };
+  const sounds = el('input', { type: 'checkbox' }); sounds.checked = settings.sounds;
+  sounds.onchange = () => { settings.sounds = sounds.checked; saveSettings(); };
+  form.append(el('label', { class: 'chk' }, mirror, ' Mirror my own camera view (others always see it unmirrored)'));
+  form.append(el('label', { class: 'chk' }, sounds, ' Play a soft sound for new messages, raised hands, joins and leaves'));
+  if (noLabels) form.append(el('p', { class: 'dim', text: 'Device names appear once you have allowed the camera or microphone for this site. Until then they are numbered.' }));
+  showScreen({ title: 'Devices', node: form, actions: [{ label: 'Done' }] });
+}
+
+// ---------------------------------------------------------------------------
+// Who is speaking, spotlight, full screen
+// ---------------------------------------------------------------------------
+const AUD = { ctx: null, nodes: new Map() };
+const SPEAK_THRESHOLD = 0.03;
+function audioCtx() {
+  if (!AUD.ctx || AUD.ctx.state === 'closed') AUD.ctx = new AudioContext();
+  if (AUD.ctx.state === 'suspended') AUD.ctx.resume().catch(() => {});
+  return AUD.ctx;
+}
+function watchLevel(key, stream) {
+  unwatchLevel(key);
+  if (!stream.getAudioTracks().length) return;
+  try {
+    const ctx = audioCtx();
+    const an = ctx.createAnalyser();
+    an.fftSize = 512;
+    const src = ctx.createMediaStreamSource(stream);
+    src.connect(an); // analysed only, never routed to the speakers
+    AUD.nodes.set(key, { an, src, buf: new Uint8Array(an.fftSize), level: 0, speaking: false });
+  } catch { /* no audio context */ }
+}
+function unwatchLevel(key) {
+  const n = AUD.nodes.get(key);
+  if (!n) return;
+  try { n.src.disconnect(); } catch {}
+  AUD.nodes.delete(key);
+  document.querySelector(`[data-tile="${CSS.escape(key)}"]`)?.classList.remove('speaking');
+  if (S.speaker === key) S.speaker = null;
+}
+function sampleLevels() {
+  if (S.left) return;
+  let best = null, bestLevel = 0;
+  for (const [key, n] of AUD.nodes) {
+    n.an.getByteTimeDomainData(n.buf);
+    let sum = 0;
+    for (const v of n.buf) { const x = (v - 128) / 128; sum += x * x; }
+    n.level = Math.sqrt(sum / n.buf.length);
+    const muted = key === 'self' ? !S.my.mic?.getAudioTracks()[0]?.enabled : !!S.peers.get(key)?.state.micMuted;
+    n.speaking = !muted && n.level > SPEAK_THRESHOLD;
+    document.querySelector(`[data-tile="${CSS.escape(key)}"]`)?.classList.toggle('speaking', n.speaking);
+    if (n.speaking && n.level > bestLevel) { best = key; bestLevel = n.level; }
+  }
+  if (best) S.speaker = best; // the last person to speak stays the active speaker
+  applyLayout();
+}
+
+function applyLayout() {
+  const tiles = $('#tiles');
+  if (!tiles) return;
+  const has = (k) => k && document.querySelector(`[data-tile="${CSS.escape(k)}"]`);
+  let focus = null;
+  if (has(S.pinned)) focus = S.pinned;
+  else if (settings.layout === 'speaker') focus = has(S.speaker) ? S.speaker : tiles.querySelector('.tile.screen')?.dataset.tile || null;
+  tiles.classList.toggle('focused', !!focus);
+  tiles.querySelectorAll('.tile').forEach((t) => {
+    t.classList.toggle('focus', t.dataset.tile === focus);
+    t.classList.toggle('pinned', t.dataset.tile === S.pinned);
+  });
+}
+function togglePin(key) { S.pinned = S.pinned === key ? null : key; applyLayout(); }
+function goFullscreen(tile) {
+  if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+  (tile.requestFullscreen || tile.webkitRequestFullscreen)?.call(tile);
+}
+function setHandBadge(tile, on) {
+  let h = tile.querySelector('.hand');
+  if (on && !h) tile.append(el('div', { class: 'hand', text: '✋', title: 'Hand raised' }));
+  else if (!on && h) h.remove();
+}
+
+// ---------------------------------------------------------------------------
+// Hand, reactions, sounds
+// ---------------------------------------------------------------------------
+const REACTIONS = ['👍', '👏', '❤️', '😂', '😮', '🎉'];
+
+function toggleHand() {
+  S.hand = !S.hand;
+  sendState();
+  log(S.hand ? 'Hand raised. Everyone can see it.' : 'Hand lowered.');
+  renderSelfTiles();
+  scheduleRender();
+}
+
+function showFloat(key, e) {
+  const t = document.querySelector(`[data-tile="${CSS.escape(key)}"]`);
+  if (!t) return;
+  const f = el('div', { class: 'float', text: e });
+  t.append(f);
+  setTimeout(() => f.remove(), 3200);
+}
+function sendReaction(e) {
+  if (!REACTIONS.includes(e)) { log(`Reactions: ${REACTIONS.join(' ')}`); return; }
+  showFloat('self', e);
+  const targets = [...S.peers.values()].filter(isCompatible).map((p) => p.id);
+  if (targets.length) S.actions.react.send({ e }, { target: targets }).catch(() => {});
+}
+function onReact(peerId, m) {
+  const p = S.peers.get(peerId);
+  if (!p || !isCompatible(p) || !m || !REACTIONS.includes(m.e)) return;
+  const now = Date.now();
+  p.reactTimes = (p.reactTimes || []).filter((t) => now - t < 10000);
+  if (p.reactTimes.length >= 6) return;
+  p.reactTimes.push(now);
+  showFloat(peerId, m.e);
+}
+function toggleReactMenu() {
+  const menu = $('#reactMenu');
+  if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
+  menu.replaceChildren(...REACTIONS.map((e) => el('button', { type: 'button', text: e, onclick: () => { sendReaction(e); menu.classList.add('hidden'); } })));
+  menu.classList.remove('hidden');
+}
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#reactMenu, #btnReact')) $('#reactMenu').classList.add('hidden');
+});
+
+function chime(type) {
+  if (!settings.sounds || S.left || !S.room) return;
+  const notes = { chat: [[880, 0.08]], hand: [[660, 0.08], [880, 0.1]], join: [[523, 0.07], [659, 0.09]], leave: [[440, 0.07], [330, 0.1]] }[type] || [];
+  try {
+    const ctx = audioCtx();
+    let t = ctx.currentTime;
+    for (const [f, d] of notes) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = f;
+      g.gain.setValueAtTime(0.04, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.connect(g).connect(ctx.destination);
+      o.start(t); o.stop(t + d);
+      t += d;
+    }
+  } catch { /* audio blocked */ }
+}
+
+// ---------------------------------------------------------------------------
+// Keep the screen awake during a call
+// ---------------------------------------------------------------------------
+async function acquireWakeLock() {
+  if (!('wakeLock' in navigator) || S.left) return;
+  try {
+    S.wake = await navigator.wakeLock.request('screen');
+    log('The screen will stay on during the call.');
+  } catch { /* not allowed right now */ }
+}
+function releaseWakeLock() { try { S.wake?.release(); } catch {} S.wake = null; }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && S.room && !S.left && (!S.wake || S.wake.released)) acquireWakeLock();
+});
+
+// ---------------------------------------------------------------------------
 // Leaving (RT6, RT21)
 // ---------------------------------------------------------------------------
 function stopAllTracks() {
@@ -1980,6 +2381,9 @@ async function leave(why) {
   const others = S.peers.size;
   if (REC.on) await stopRecording();
   stopAllTracks();
+  releaseWakeLock();
+  stopMicTest();
+  try { AUD.ctx?.close(); } catch {}
   try { await S.room?.leave(); } catch {}
   for (const pc of [...allPCs]) { try { pc.close(); } catch {} }
   const ended = allTracksEnded();
@@ -2069,6 +2473,12 @@ const COMMANDS = {
       '/chat <message>   message everyone (the Chat tab shows replies)',
       '/dm <peer> <message>   direct message one person',
       '/record           start or stop recording (room creator only)',
+      '/hand             raise or lower your hand',
+      '/react <emoji>    send a reaction (👍 👏 ❤️ 😂 😮 🎉)',
+      '/layout grid|speaker   how tiles are arranged',
+      '/pin <peer|self|off>   spotlight one tile    /fullscreen [peer|self]',
+      '/devices | /flip  choose or test devices / switch to the next camera',
+      '/sounds on|off    soft sounds for messages, hands, joins and leaves',
       '/res auto|720|360|180   send quality',
       '/remove <peer>    ask everyone to disconnect a peer (a request, not enforcement)',
       '/move [all|peer…] move to a new room with the chosen people',
@@ -2110,6 +2520,32 @@ const COMMANDS = {
     const n = S.peers.size + 1;
     log(`Room cap: ${audioCap} people (hard refusal beyond). Video cap: ${videoCap} people. Both are provisional and NOT measured yet.\nHere now: ${n}. Your video seat: ${iHaveVideoSeat() ? 'yes' : 'no (audio only)'}.\nSeat order: ${seatOrder().map((id, i) => `${i + 1}.${id === S.selfId ? 'you' : displayName(id)}`).join('  ')}`);
   },
+  hand() { toggleHand(); },
+  react(args) { sendReaction(args[0]); },
+  layout(args) {
+    if (!['grid', 'speaker'].includes(args[0])) { log(`Layout is ${settings.layout}. Usage: /layout grid|speaker`); return; }
+    settings.layout = args[0]; saveSettings(); $('#selLayout').value = args[0]; applyLayout();
+    log(`Layout: ${args[0] === 'grid' ? 'grid' : 'speaker (the active speaker or a shared screen is enlarged)'}.`);
+  },
+  pin(args) {
+    if (!args.length) { log(S.pinned ? `Pinned: ${S.pinned === 'self' ? 'you' : displayName(S.pinned)}` : 'Nothing is pinned. Usage: /pin <peer|self|off>'); return; }
+    if (args[0] === 'off') { S.pinned = null; applyLayout(); log('Unpinned.'); return; }
+    const key = args[0] === 'self' ? 'self' : findPeer(args[0])?.id;
+    if (!key) { log('Usage: /pin <peer|self|off>   (see /peers)', 'err'); return; }
+    S.pinned = key; applyLayout(); log(`Pinned ${key === 'self' ? 'yourself' : displayName(key)}.`);
+  },
+  fullscreen(args) {
+    const key = !args.length || args[0] === 'self' ? 'self' : findPeer(args[0])?.id;
+    const tile = key && document.querySelector(`[data-tile="${CSS.escape(key)}"]`);
+    if (!tile) { log('Usage: /fullscreen [peer|self]', 'err'); return; }
+    goFullscreen(tile);
+  },
+  sounds(args) {
+    if (!['on', 'off'].includes(args[0])) { log(`Sounds are ${settings.sounds ? 'on' : 'off'}. Usage: /sounds on|off`); return; }
+    settings.sounds = args[0] === 'on'; saveSettings(); log(`Sounds ${args[0]}.`);
+  },
+  devices() { return openDevices(); },
+  flip() { return flipCamera(); },
   chat(args) { if (!args.length) { showTab('chat'); return; } sendChat(args.join(' ')); },
   dm(args) {
     const p = findPeer(args[0]);
@@ -2323,6 +2759,13 @@ $('#btnShare').onclick = toggleShare;
 $('#btnLeave').onclick = () => leave('user');
 $('#btnMove').onclick = openMoveDialog;
 $('#btnRec').onclick = toggleRecord;
+$('#btnHand').onclick = toggleHand;
+$('#btnFlip').onclick = flipCamera;
+$('#btnDevices').onclick = openDevices;
+$('#btnReact').onclick = toggleReactMenu;
+$('#selLayout').onchange = (e) => COMMANDS.layout([e.target.value]);
+addEventListener('online', () => { log('Network is back.'); scheduleRender(); });
+addEventListener('offline', () => { log('You went offline.', 'err'); scheduleRender(); });
 $('#tabChat').onclick = () => showTab('chat');
 $('#tabConsole').onclick = () => showTab('console');
 const submitChat = () => { const i = $('#chatIn'); sendChat(i.value, $('#chatTo').value); i.value = ''; i.focus(); };
@@ -2343,7 +2786,7 @@ bootLanding();
 // Read-only handle for tests and DevTools.
 window.rtc = {
   version: VERSION, protocol: PROTOCOL, S, chooseLevel, rosterRows, allTracksEnded,
-  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
+  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
 };
 </script>
 </body>

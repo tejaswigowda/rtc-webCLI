@@ -30,7 +30,7 @@ const relay = await startMockRelay();
 await until(async () => (await fetch(ORIGIN)).ok, 10000);
 
 const browser = await chromium.launch({
-  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--disable-features=WebRtcHideLocalIpsWithMdns'],
+  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream=device-count=2', '--disable-features=WebRtcHideLocalIpsWithMdns'],
 });
 
 const requests = [];
@@ -112,7 +112,7 @@ try {
   await A.fill('#consoleIn', '/path'); await A.press('#consoleIn', 'Enter');
   check('RT15 /path labels the connection path', await until(async () => /direct|relay/.test(await A.textContent('#consoleOut')), 8000));
   await A.fill('#consoleIn', '/about'); await A.press('#consoleIn', 'Enter');
-  check('RT26 /about shows protocol + lib hash', /protocol 2/.test(await A.textContent('#consoleOut')) && /sha256:[0-9a-f]{64}/.test(await A.textContent('#consoleOut')));
+  check('RT26 /about shows protocol + lib hash', /protocol 3/.test(await A.textContent('#consoleOut')) && /sha256:[0-9a-f]{64}/.test(await A.textContent('#consoleOut')));
   await A.fill('#consoleIn', '/relays'); await A.press('#consoleIn', 'Enter');
   await A.fill('#consoleIn', '/egress'); await A.press('#consoleIn', 'Enter');
   check('RT16/RF13 /egress shows declared and observed hosts, observed ⊆ declared (LAN-only)',
@@ -185,6 +185,64 @@ try {
   const roster = await A.textContent('#roster');
   check('RT5 remove button is labelled as a request', /Ask everyone to disconnect/.test(roster));
 
+  // --- Basics: devices, speaker highlight, spotlight, hand, reactions, timer, reconnect ----------------
+  await A.click('#btnDevices');
+  await A.waitForSelector('#overlayCard select');
+  const camOptions = await A.$$eval('#overlayCard select:nth-of-type(1) option, #overlayCard select option', (os) => os.length);
+  const selects = await A.$$eval('#overlayCard select', (ss) => ss.map((s) => [...s.options].map((o) => o.value)));
+  check('Devices dialog lists cameras and microphones', selects.length >= 2 && selects[0].length >= 2 && selects[1].length >= 2, JSON.stringify(selects.map((x) => x.length)));
+  const camBefore = await A.evaluate(() => window.rtc.S.my.cam.getVideoTracks()[0].id);
+  const camTarget = selects[0].filter(Boolean)[1] ?? selects[0].filter(Boolean)[0];
+  await A.selectOption('#overlayCard select >> nth=0', camTarget);
+  const switched = await until(() => A.evaluate((before) => {
+    const t = window.rtc.S.my.cam.getVideoTracks()[0];
+    const onSenders = [...window.rtc.allPCs].flatMap((pc) => pc.getSenders()).filter((s) => s.track === t).length;
+    return t.id !== before && t.readyState === 'live' && onSenders >= 1;
+  }, camBefore), 15000);
+  check('switching camera while live swaps the track on every connection without stopping the call', switched);
+  check('after the switch every track is still accounted for in the roster', (await until(() => A.evaluate(() => window.rtc.rt4Check().ok), 8000)));
+  await A.click('#overlayCard button:has-text("Done")');
+  const mirrored = await A.$eval('[data-tile="self"] video', (v) => v.classList.contains('mirror'));
+  await A.click('#btnDevices'); await A.waitForSelector('#overlayCard input[type=checkbox]');
+  await A.click('#overlayCard label:has-text("Mirror") input');
+  check('mirror toggle flips only the self view', mirrored && !(await A.$eval('[data-tile="self"] video', (v) => v.classList.contains('mirror'))));
+  await A.click('#overlayCard label:has-text("Mirror") input');
+  await A.click('#overlayCard button:has-text("Done")');
+  const err = await A.evaluate(() => window.rtc.explainMediaError({ name: 'NotAllowedError' }, 'cam'));
+  check('permission-denied errors get step-by-step help', /blocked your camera/.test(err.title) && /lock or tune icon/.test(err.body.join(' ')));
+
+  await B.click('#tabConsole');
+  const speaking = await until(() => A.evaluate(() => [...document.querySelectorAll('.tile.speaking')].length > 0), 20000);
+  check('active speaker: a tile is highlighted while someone talks (fake microphone beeps)', speaking);
+  const bTile = await A.evaluate(() => [...window.rtc.S.peers.values()].find((p) => p.name === 'Bob')?.id);
+  await A.hover(`[data-tile="${bTile}"]`);
+  await A.click(`[data-tile="${bTile}"] .tbtn.pin`);
+  check('pin spotlights a tile (and unpin restores the grid)', await A.evaluate((id) => document.querySelector(`[data-tile="${id}"]`).classList.contains('focus') && document.querySelector('#tiles').classList.contains('focused'), bTile));
+  await A.hover(`[data-tile="${bTile}"]`);
+  await A.click(`[data-tile="${bTile}"] .tbtn.pin`);
+  check('unpin', await A.evaluate(() => !document.querySelector('#tiles').classList.contains('focused')));
+  await A.fill('#consoleIn', '/layout speaker'); await A.press('#consoleIn', 'Enter');
+  check('speaker layout enlarges the active speaker', await until(() => A.evaluate(() => document.querySelector('#tiles').classList.contains('focused') && !!document.querySelector('.tile.focus')), 20000));
+  await A.fill('#consoleIn', '/layout grid'); await A.press('#consoleIn', 'Enter');
+
+  await B.fill('#consoleIn', '/hand'); await B.press('#consoleIn', 'Enter');
+  check('raise hand shows a hand on B\'s tile and a line in chat, for others', await until(async () => await A.evaluate((id) => !!document.querySelector(`[data-tile="${id}"] .hand`), bTile) && /raised their hand/.test(await A.textContent('#chatOut')), 15000));
+  await B.fill('#consoleIn', '/hand'); await B.press('#consoleIn', 'Enter');
+  await B.fill('#consoleIn', '/react 🎉'); await B.press('#consoleIn', 'Enter');
+  check('reaction floats over the sender\'s tile for others', await until(() => A.evaluate((id) => !!document.querySelector(`[data-tile="${id}"] .float`), bTile), 10000));
+  await A.click('#btnReact');
+  check('react menu offers the reactions', (await A.$$eval('#reactMenu button', (b) => b.length)) === 6);
+  await A.click('#reactMenu button >> nth=0');
+  check('meeting timer is shown', /in room \d\d:\d\d/.test(await A.textContent('#timer')));
+  await A.evaluate(() => { Object.defineProperty(navigator, 'onLine', { get: () => false, configurable: true }); window.dispatchEvent(new Event('offline')); });
+  check('offline banner appears', await until(async () => /You're offline/.test(await A.textContent('#status')), 5000));
+  await A.evaluate(() => { delete navigator.onLine; window.dispatchEvent(new Event('online')); });
+
+  // Connection loss: close the link to B. The library re-dials, and media must resume without any action.
+  await A.evaluate((id) => { window.rtc.S.room.getPeers()[id].connection.close(); }, bTile);
+  const recovered = await until(() => A.evaluate((id) => { const p = window.rtc.S.peers.get(id); return !!p && p.hello && window.rtc.S.sent.cam.has(id) && window.rtc.rt4Check().ok; }, bTile), 90000);
+  check('after the link to a peer drops, it reconnects by itself and your camera resumes', recovered);
+
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
   let rt4;
@@ -228,7 +286,7 @@ try {
   check('RT21 leave with camera on → all tracks report ended', await A.evaluate(() => window.rtc.allTracksEnded()) && /Verified: \d+ of \d+ tracks/.test(overlay), overlay.slice(0, 160));
 
   // --- RT26: incompatible version -------------------------------------------------
-  const E = await open('Eve', { url: inviteUrl, dev: { protocol: 3 } });
+  const E = await open('Eve', { url: inviteUrl, dev: { protocol: 4 } });
   await join(E);
   check('RT26 mismatched protocol → named refusal on both sides', await until(async () => /incompatible version/.test(await B.textContent('#roster')) && /incompatible version/.test(await E.textContent('#roster')), 45000));
   await E.close(); await D.close();

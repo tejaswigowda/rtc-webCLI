@@ -10,7 +10,7 @@ A browser-based room for audio, video and screen share, opened with an invite li
 
 > Part of the **webCLI** family of browser tools. Same look and feel, same discipline about what leaves your device, with one difference stated up front: **a call has to send**. Your media goes to the other people in the room, and the introduction relays and a STUN server are contacted to set that up. Every host is listed in the [egress table](#privacy--egress), and nothing is claimed beyond it.
 
-**Status: v0.2.0 (protocol 2), first real-device runs on 2026-11-21: two pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
+**Status: v0.3.0 (protocol 3), first real-device runs on 2026-11-21: two pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
 ---
 
@@ -65,9 +65,17 @@ There is no `run=` agent surface and no `window.__webcli_result` yet.
 
 - **Recording, creator only**: whoever created the room (the browser holding the key behind the invite) gets a **Record** button; nobody else does. The recording is made in that browser and saved to that device, including everyone's video, audio and shared screens as the creator sees them. Chat is not recorded. Before it starts the creator confirms what is captured. Everyone else is told in their own window: a banner for as long as it runs, a notice with **Stay** or **Leave** when it starts (also for people who join late), a tag in the roster, and a message in the chat. Peers accept a "recording" message only from the peer that proved it is the creator
 
+- **Device Control**: **Devices…** lists cameras, microphones and (where the browser allows it) speakers, with a microphone level meter and a speaker test sound. Changing the camera or microphone while live swaps the track on every connection without dropping the call. **Flip camera** cycles cameras on a phone. If a device is unplugged or taken by another app, the page says so and stops that stream. A blocked or busy camera gets plain-language help for each browser instead of a bare error. Your choices are remembered
+
+- **Layout**: tiles show who is speaking (a green outline, computed in your browser from each person's audio) and who is muted. **Grid** or **Speaker** layout; **Pin** (spotlight) any tile; **Full screen** on a tile (button or double-click); your own camera view can be mirrored (others always see it unmirrored)
+
+- **Hand, Reactions, Sounds, Timer**: raise or lower a hand (a hand on your tile, a line in chat, a soft sound); send a reaction (👍 👏 ❤️ 😂 😮 🎉) that floats over your tile; soft sounds for new messages, hands, joins and leaves (can be turned off); a timer shows how long you have been in the room; the tab title shows unread messages
+
+- **Stays Connected**: the screen is kept awake during a call where the browser allows it. If the link to someone drops, the page says "Reconnecting…", the library re-dials by itself, and your camera and microphone resume without any action (tested). If you go offline, the page says so
+
 - **Visible Network Settings**: STUN is named and can be turned off ("LAN only"). TURN is never built in; you can add your own, and the path then shows **relay** and names the host
 
-- **Console With GUI Parity**: `/peers`, `/path`, `/stats <peer>` (raw `getStats()`), `/cap`, `/mic`, `/mute`, `/cam`, `/share`, `/send`, `/cancel`, `/chat`, `/dm`, `/record`, `/res`, `/remove`, `/move`, `/invite`, `/qr`, `/lan`, `/turn`, `/relays`, `/egress`, `/about`, `/leave`. Each is a button or setting in the GUI, and the other way round
+- **Console With GUI Parity**: `/peers`, `/path`, `/stats <peer>` (raw `getStats()`), `/cap`, `/mic`, `/mute`, `/cam`, `/share`, `/send`, `/cancel`, `/chat`, `/dm`, `/record`, `/hand`, `/react`, `/layout`, `/pin`, `/fullscreen`, `/devices`, `/flip`, `/sounds`, `/res`, `/remove`, `/move`, `/invite`, `/qr`, `/lan`, `/turn`, `/relays`, `/egress`, `/about`, `/leave`. Each is a button or setting in the GUI, and the other way round
 
 - **Verified Library**: Trystero and the QR generator are vendored in `docs/lib/`. The page checks each file's SHA-256 against the value pinned in `docs/index.html` and refuses to run on a mismatch
 
@@ -105,6 +113,9 @@ The first time, you are told that others in the room can see your IP address. Yo
 
 ### ✎ 5 · Watch the Roster
 The roster shows each person, how you are connected (direct or relay), what they receive from you, and what they send you. Failures to connect appear there too, with the reason and what each side offered, and in the console. They are not repeated as a banner.
+
+### 🎛 Devices, layout and reactions
+**Devices…** opens the pickers and tests. **Layout** switches Grid and Speaker. Hover a tile for **Pin** and **Full screen**. **✋ Raise hand** and **😀 React** are in the controls. On a phone with two cameras, **Flip camera** appears while your camera is live.
 
 ### 💬 6 · Chat
 Open the **Chat** tab. Pick **Everyone** or one person under **To**, type, press Enter. `/chat <message>` and `/dm <peer> <message>` do the same from the console.
@@ -278,6 +289,7 @@ npx playwright install chromium    # first time only
 | RT24 | names labelled unverified | `npm test` |
 | RT25 | IP disclosure before first join | built; review open |
 | RT26 | incompatible versions refused by name | `npm test` |
+| Devices and layout | device lists, switching the camera while live (track swapped on every connection, roster still complete), mirror toggle, permission-error help, speaker highlight with fake microphones, pin and unpin, speaker layout, hand, reactions, timer, offline banner, reconnect after a dropped link | `npm test`; **speakers, phones, flip camera, wake lock and full screen are not tested** |
 | Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
 | Recording | creator-only button; a non-creator is refused; everyone is told and told again when it stops; a claim from a non-creator is ignored; the saved file is non-empty | `npm test`; **late-joiner notice and long-recording memory use not yet tested** |
 
@@ -340,7 +352,8 @@ Each of these is logged, with a trigger for building it:
 
 - **Rooms larger than the cap** (an SFU). Never inside this tool; a server would hold media.
 - **Host controls, lock, waiting room.** Not enforceable without a server, so not faked. (Recording by the creator is offered because it only affects the creator's own copy.)
-- **Cloud recording, chat history, file sharing in chat.** Nothing is stored anywhere but the creator's own recording file.
+- **Cloud recording, chat history, file sharing in chat.** Nothing is stored anywhere but the creator's own recording file. History for late joiners and file sharing were considered and left out: history would mean someone's browser keeps and hands over messages, and a file from a stranger holding the link is an attack surface.
+- **Live captions.** Possible by reusing whisper-webCLI in the browser, but it is a large download and not built.
 - **Zero-relay calls by manual QR exchange** (exactly two people).
 - **Background blur and noise suppression** beyond what the browser provides.
 - **A `run=` agent surface** (`window.__webcli_result`).
