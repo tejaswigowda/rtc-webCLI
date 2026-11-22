@@ -1,0 +1,12 @@
+{
+  "trystero-nostr.js": {
+    "version": "0.27.0",
+    "sha256": "6a6178fe91676060d83288ad57b18257a457e7512d07ff8157e43beded27459b",
+    "package": "@trystero-p2p/nostr"
+  },
+  "qrcode.js": {
+    "version": "1.5.2",
+    "sha256": "065509cfd450f89dbffccc8e37d16f5cb03099aef7c36ab2a23d27611bd97b03",
+    "package": "qrcode-generator"
+  }
+}

@@ -1,0 +1,1563 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' blob:; style-src 'unsafe-inline'; connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:*; img-src 'self' data: blob:; media-src blob: mediastream:; base-uri 'none'; form-action 'none'">
+<title>rtc-webCLI</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --line:#2a313c; --fg:#e6edf3; --dim:#8b949e; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  button, input, select { font:inherit; color:inherit; }
+  button { background:#21262d; border:1px solid var(--line); border-radius:6px; padding:6px 12px; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--acc); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button.primary { background:#1f6feb; border-color:#1f6feb; }
+  button.danger { background:#da3633; border-color:#da3633; }
+  button.on { background:#238636; border-color:#238636; }
+  button.warn { background:#9e6a03; border-color:#9e6a03; }
+  input[type=text], input[type=password], select { background:#0d1117; border:1px solid var(--line); border-radius:6px; padding:6px 8px; width:100%; }
+  a { color:var(--acc); }
+  code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .hidden { display:none !important; }
+  .dim { color:var(--dim); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; }
+
+  #landing { max-width:640px; margin:0 auto; padding:32px 16px 64px; }
+  #landing h1 { margin:0 0 4px; font-size:26px; }
+  #landing .sub { margin:0 0 20px; color:var(--dim); }
+  #landing .card { margin-bottom:16px; }
+  #landing label { display:block; margin:10px 0 4px; color:var(--dim); font-size:12px; }
+  #landing .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+  #landing details { margin-top:12px; }
+  #landing summary { cursor:pointer; color:var(--dim); }
+  .banner { border-radius:8px; padding:10px 12px; margin:10px 0; border:1px solid var(--line); }
+  .banner.bad { border-color:var(--bad); background:rgba(248,81,73,.1); }
+  .banner.warn { border-color:var(--warn); background:rgba(210,153,34,.1); }
+  .banner.info { border-color:var(--acc); background:rgba(88,166,255,.08); }
+  ul.plain { margin:6px 0; padding-left:18px; }
+
+  #room { display:grid; grid-template-columns:1fr 340px; grid-template-rows:auto auto 1fr auto; height:100%; gap:0; }
+  #topbar { grid-column:1 / 3; display:flex; gap:12px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); background:var(--panel); flex-wrap:wrap; }
+  #topbar .title { font-weight:600; }
+  #status { grid-column:1 / 3; padding:0; }
+  #status .banner { margin:0; border-radius:0; border-width:0 0 1px 0; }
+  #stage { overflow:auto; padding:12px; }
+  #tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; }
+  .tile { position:relative; background:#000; border:1px solid var(--line); border-radius:8px; aspect-ratio:16/9; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  .tile.screen { grid-column:span 2; }
+  .tile video { width:100%; height:100%; object-fit:contain; background:#000; }
+  .tile .avatar { font-size:42px; color:var(--dim); }
+  .tile .label { position:absolute; left:6px; bottom:6px; background:rgba(0,0,0,.65); border-radius:4px; padding:2px 6px; font-size:12px; max-width:90%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tile .badge { position:absolute; right:6px; top:6px; background:rgba(0,0,0,.65); border-radius:4px; padding:2px 6px; font-size:11px; color:var(--warn); }
+  #preview { margin:0 12px 12px; }
+  #preview video { width:100%; max-width:420px; border-radius:8px; background:#000; display:block; margin-bottom:8px; }
+  #side { border-left:1px solid var(--line); display:flex; flex-direction:column; min-height:0; background:var(--panel); }
+  #side h3 { margin:0; padding:8px 12px; font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--line); }
+  #roster { overflow:auto; max-height:45%; }
+  .rrow { padding:8px 12px; border-bottom:1px solid var(--line); }
+  .rrow .nm { font-weight:600; }
+  .rrow .meta { color:var(--dim); font-size:12px; }
+  .chip { display:inline-block; padding:0 6px; border-radius:10px; font-size:11px; border:1px solid var(--line); margin:2px 4px 0 0; }
+  .chip.ok { border-color:var(--ok); color:var(--ok); }
+  .chip.warn { border-color:var(--warn); color:var(--warn); }
+  .chip.bad { border-color:var(--bad); color:var(--bad); }
+  .rrow.fail { background:rgba(248,81,73,.08); }
+  .rrow button { font-size:12px; padding:2px 8px; margin-top:4px; }
+  #consoleWrap { flex:1; min-height:0; display:flex; flex-direction:column; border-top:1px solid var(--line); }
+  #consoleOut { flex:1; overflow:auto; padding:8px 12px; white-space:pre-wrap; word-break:break-word; }
+  #consoleOut .err { color:var(--bad); }
+  #consoleOut .cmd { color:var(--acc); }
+  #consoleIn { border:0; border-top:1px solid var(--line); border-radius:0; }
+  #controls { grid-column:1 / 3; display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line); background:var(--panel); flex-wrap:wrap; align-items:center; }
+  #controls .grow { flex:1; }
+  #qualityLine { color:var(--dim); font-size:12px; }
+  #why { color:var(--dim); font-size:12px; }
+
+  #overlay { position:fixed; inset:0; background:rgba(1,4,9,.8); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  #overlay .card { max-width:520px; width:100%; max-height:90vh; overflow:auto; }
+  #overlay h2 { margin:0 0 8px; font-size:18px; }
+  #overlay .actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap; }
+  #qrCanvas { background:#fff; padding:8px; border-radius:6px; image-rendering:pixelated; width:240px; height:240px; display:block; margin:8px auto; }
+  .chk { display:block; margin:6px 0; }
+
+  @media (max-width: 800px) {
+    #room { grid-template-columns:1fr; grid-template-rows:auto auto 1fr auto auto; height:auto; min-height:100%; }
+    #topbar, #status, #controls { grid-column:1; }
+    #side { border-left:0; border-top:1px solid var(--line); max-height:60vh; }
+    .tile.screen { grid-column:span 1; }
+  }
+</style>
+</head>
+<body>
+
+<div id="landing">
+  <h1>rtc-webCLI</h1>
+  <p class="sub">Invite-link rooms for audio, video and screen share. Peer-to-peer; we run no server.</p>
+
+  <div id="insecure" class="banner bad hidden"></div>
+  <div id="fatal" class="banner bad hidden"></div>
+
+  <div class="card" id="pane-start">
+    <div id="invitedNote" class="banner info hidden">You opened an invite link. Nothing is sent anywhere until you join.</div>
+    <label for="name">Display name (self-asserted; others see it marked unverified)</label>
+    <input id="name" type="text" maxlength="24" autocomplete="off" placeholder="Your name">
+
+    <div class="row">
+      <button id="btnCreate" class="primary">Create a room</button>
+      <button id="btnJoin" class="primary hidden">Join room</button>
+      <button id="btnCopyLanding" class="hidden">Copy invite</button>
+    </div>
+    <p class="dim" id="landingInvite"></p>
+
+    <div class="banner warn" style="margin-top:14px">
+      <strong>Before you join:</strong> others in the room can see your IP address. The introduction servers see it too.
+      Camera and microphone stay off until you turn them on and confirm a preview.
+    </div>
+
+    <details>
+      <summary>Network settings</summary>
+      <label class="chk"><input type="checkbox" id="setLan"> LAN only — don't contact the STUN server (peers on the same network only)</label>
+      <label for="setStun">STUN server</label>
+      <input id="setStun" type="text" autocomplete="off">
+      <label for="setTurn">Your own TURN server (optional; never built in)</label>
+      <input id="setTurn" type="text" autocomplete="off" placeholder="turn:turn.example.org:3478">
+      <div class="row">
+        <input id="setTurnUser" type="text" autocomplete="off" placeholder="TURN username" style="flex:1">
+        <input id="setTurnCred" type="password" autocomplete="off" placeholder="TURN credential" style="flex:1">
+      </div>
+      <label for="setRelays">Introduction relays (comma-separated wss:// URLs; blank = built-in list)</label>
+      <input id="setRelays" type="text" autocomplete="off">
+      <div class="row"><button id="btnSaveSettings">Save settings</button><span class="dim" id="settingsNote"></span></div>
+    </details>
+  </div>
+
+  <div class="card dim">
+    <strong style="color:var(--fg)">How this works, honestly</strong>
+    <ul class="plain">
+      <li>Audio, video and screen go directly between participants, encrypted (DTLS-SRTP).</li>
+      <li>The invite secret lives only after the <code>#</code> in the link; browsers never send it to a server.</li>
+      <li>Introductions go through public Nostr relays. They see a room hash and encrypted connection data.</li>
+      <li>A room exists only while someone is in it. Nothing is stored anywhere.</li>
+      <li>There is no host. Nobody can lock the room or remove anyone; anyone with the link is a peer.</li>
+    </ul>
+  </div>
+</div>
+
+<div id="room" class="hidden">
+  <div id="topbar">
+    <span class="title">rtc-webCLI</span>
+    <span class="dim" id="roomInfo"></span>
+    <span class="grow" style="flex:1"></span>
+    <span class="dim mono" id="rt4check"></span>
+    <button id="btnInvite">Copy invite</button>
+    <button id="btnQr">QR</button>
+  </div>
+  <div id="status"></div>
+  <div id="stage">
+    <div id="tiles"></div>
+  </div>
+  <div id="side">
+    <h3>Roster <span class="dim" style="text-transform:none;letter-spacing:0">— who is connected and what they receive</span></h3>
+    <div id="roster"></div>
+    <h3>Console <span class="dim" style="text-transform:none;letter-spacing:0">— /help</span></h3>
+    <div id="consoleWrap">
+      <div id="consoleOut" class="mono"></div>
+      <input id="consoleIn" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="/help">
+    </div>
+  </div>
+  <div id="controls">
+    <button id="btnMic">Mic: off</button>
+    <button id="btnCam">Camera: off</button>
+    <button id="btnShare">Share screen</button>
+    <span id="why"></span>
+    <span class="grow"></span>
+    <label class="dim" for="selRes">Send quality</label>
+    <select id="selRes" style="width:auto">
+      <option value="auto">Auto</option>
+      <option value="720">720p</option>
+      <option value="360">360p</option>
+      <option value="180">180p</option>
+    </select>
+    <span id="qualityLine"></span>
+    <button id="btnMove">Move room…</button>
+    <button id="btnLeave" class="danger">Leave</button>
+  </div>
+</div>
+
+<div id="overlay" class="hidden"><div class="card" id="overlayCard"></div></div>
+
+<script type="module">
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const PINS = /*PINS*/{"trystero-nostr.js":{"version":"0.27.0","sha256":"6a6178fe91676060d83288ad57b18257a457e7512d07ff8157e43beded27459b","package":"@trystero-p2p/nostr"},"qrcode.js":{"version":"1.5.2","sha256":"065509cfd450f89dbffccc8e37d16f5cb03099aef7c36ab2a23d27611bd97b03","package":"qrcode-generator"}}/*END-PINS*/;
+const VERSION = '0.1.0';
+const APP_ID = 'rtc-webCLI';
+const TOPIC_LABEL = 'rtc-webCLI/v1/topic';
+const SDP_LABEL = 'rtc-webCLI/v1/sdp';
+const RELAYS = [
+  'wss://no.str.cr',
+  'wss://relay.wavlake.com',
+  'wss://nostr.hifish.org',
+  'wss://relay.notoshi.win',
+  'wss://relay.dwadziesciajeden.pl',
+];
+const DEFAULT_STUN = 'stun:stun.cloudflare.com:3478';
+// Provisional caps. They are NOT measured yet (RT9) and must not be quoted as capability claims.
+const AUDIO_CAP = 8;
+const VIDEO_CAP = 4;
+const CONNECT_TIMEOUT_MS = 15000;
+const RELAY_GRACE_MS = 8000;
+const HELLO_TIMEOUT_MS = 6000;
+const WARMUP_MS = 12000;
+const SETTINGS_KEY = 'rtc.settings';
+const IP_NOTICE_KEY = 'rtc.ipNoticeSeen';
+const AUTOJOIN_KEY = 'rtc.autojoin';
+
+// Test hook, honoured on localhost only: {protocol, audioCap, videoCap}.
+const DEV = (() => {
+  if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return {};
+  try { return JSON.parse(localStorage.getItem('rtc.dev') || '{}'); } catch { return {}; }
+})();
+const PROTOCOL = DEV.protocol ?? 1;
+const audioCap = DEV.audioCap ?? AUDIO_CAP;
+const videoCap = DEV.videoCap ?? VIDEO_CAP;
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+const $ = (s) => document.querySelector(s);
+const enc = new TextEncoder();
+const hex = (b) => [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+const b64u = {
+  enc(bytes) { let s = ''; for (const b of bytes) s += String.fromCharCode(b); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); },
+  dec(str) { const p = str.replace(/-/g, '+').replace(/_/g, '/'); const bin = atob(p + '='.repeat((4 - (p.length % 4)) % 4)); return Uint8Array.from(bin, (c) => c.charCodeAt(0)); },
+};
+const sha256 = async (bytes) => new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+const concat = (a, b) => { const o = new Uint8Array(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+const short = (id) => String(id || '').slice(0, 4);
+const el = (tag, props = {}, ...kids) => {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k === 'text') e.textContent = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid != null) e.append(kid);
+  return e;
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function deriveRoom(secret) {
+  const topic = await sha256(concat(enc.encode(TOPIC_LABEL), secret));
+  const key = await crypto.subtle.importKey('raw', secret, 'HKDF', false, ['deriveBits']);
+  const pw = new Uint8Array(await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode(SDP_LABEL) }, key, 256));
+  return { roomId: hex(topic), password: b64u.enc(pw) };
+}
+
+function parseInvite() {
+  const m = /^#k=([A-Za-z0-9_-]{22})$/.exec(location.hash);
+  if (!m) return null;
+  try { const s = b64u.dec(m[1]); return s.length === 16 ? s : null; } catch { return null; }
+}
+// Invites must be reachable from other devices, so on a loopback origin the server's LAN address replaces the host.
+let inviteBase = location.href.split('#')[0];
+const isLoopbackHost = (h) => ['localhost', '127.0.0.1', '[::1]'].includes(h);
+let inviteBaseReady = null;
+function resolveInviteBase() {
+  inviteBaseReady ??= (async () => {
+    if (!isLoopbackHost(location.hostname)) return;
+    try {
+      const res = await fetch('lan.json', { cache: 'no-store' });
+      const { addresses, port, protocol } = await res.json();
+      if (addresses?.length) inviteBase = `${protocol}//${addresses[0]}${port ? ':' + port : ''}${location.pathname}`;
+    } catch { /* not served by server.js; keep the current origin */ }
+  })();
+  return inviteBaseReady;
+}
+const inviteIsLoopback = () => isLoopbackHost(new URL(inviteBase).hostname);
+const inviteUrl = (secret) => inviteBase + '#k=' + b64u.enc(secret);
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+const settings = (() => {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
+  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', ...s };
+})();
+const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+function customRelays() {
+  return settings.relays.split(',').map((s) => s.trim()).filter((s) => /^wss?:\/\/[^\s]+$/.test(s));
+}
+const activeRelays = () => (customRelays().length ? customRelays() : RELAYS);
+
+// ---------------------------------------------------------------------------
+// Verified, hash-pinned library loading (RT17)
+// ---------------------------------------------------------------------------
+const libCache = {};
+async function loadVerified(file) {
+  if (libCache[file]) return libCache[file];
+  const pin = PINS[file];
+  if (!pin) throw new Error(`No pinned hash for ${file}. Run "npm run vendor".`);
+  const res = await fetch('lib/' + file, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Could not load lib/${file} (${res.status}).`);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  const got = hex(await sha256(buf));
+  if (got !== pin.sha256) throw new Error(`lib/${file} does not match its pinned SHA-256 (got ${got}). Refusing to run it.`);
+  const url = URL.createObjectURL(new Blob([buf], { type: 'text/javascript' }));
+  try { libCache[file] = await import(url); } finally { URL.revokeObjectURL(url); }
+  return libCache[file];
+}
+
+// ---------------------------------------------------------------------------
+// Overlay screens
+// ---------------------------------------------------------------------------
+function showScreen({ title, body, actions = [], node }) {
+  const card = $('#overlayCard');
+  card.replaceChildren(el('h2', { text: title }));
+  if (body) for (const para of [].concat(body)) card.append(el('p', { text: para }));
+  if (node) card.append(node);
+  const bar = el('div', { class: 'actions' });
+  for (const a of actions) bar.append(el('button', { class: a.cls || '', text: a.label, onclick: () => { hideScreen(); a.fn?.(); } }));
+  card.append(bar);
+  $('#overlay').classList.remove('hidden');
+}
+const hideScreen = () => $('#overlay').classList.add('hidden');
+
+// ---------------------------------------------------------------------------
+// Console
+// ---------------------------------------------------------------------------
+function log(text, cls = '') {
+  const out = $('#consoleOut');
+  if (!out) return;
+  const line = el('div', { class: cls, text });
+  out.append(line);
+  while (out.childNodes.length > 500) out.firstChild.remove();
+  out.scrollTop = out.scrollHeight;
+}
+
+// ---------------------------------------------------------------------------
+// Peer-connection tracking (RT4, RT13, RT15)
+// Every RTCPeerConnection Trystero creates is registered here, so the roster can
+// be checked against the real connections instead of trusting the library's view.
+// ---------------------------------------------------------------------------
+const allPCs = new Set();
+const failures = [];
+const seenFailures = new WeakSet();
+
+class TrackedPC extends RTCPeerConnection {
+  constructor(cfg) {
+    super(cfg);
+    this._born = Date.now();
+    this._remoteAt = null;
+    this._localCands = 0;
+    this._extraRemoteCands = 0;
+    allPCs.add(this);
+    this.addEventListener('icecandidate', (e) => { if (e.candidate && e.candidate.candidate) this._localCands++; });
+    this.addEventListener('connectionstatechange', () => {
+      if (this.connectionState === 'closed') allPCs.delete(this);
+      if (this.connectionState === 'failed') noteFailure(this);
+      scheduleRender();
+    });
+  }
+  setRemoteDescription(desc, ...rest) {
+    if (this._remoteAt == null) this._remoteAt = Date.now();
+    return super.setRemoteDescription(desc, ...rest);
+  }
+  addIceCandidate(c, ...rest) {
+    if (c && c.candidate) this._extraRemoteCands++;
+    return super.addIceCandidate(c, ...rest);
+  }
+  remoteCandidateCount() {
+    const sdp = this.remoteDescription?.sdp || '';
+    return (sdp.match(/^a=candidate:/gm) || []).length + this._extraRemoteCands;
+  }
+}
+
+function classifyFailure(pc) {
+  if (pc._localCands === 0 || pc.remoteCandidateCount() === 0) return 'no candidates';
+  if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return 'DTLS failed';
+  return 'ICE failed';
+}
+
+function noteFailure(pc, peerId) {
+  if (seenFailures.has(pc)) return;
+  seenFailures.add(pc);
+  const reason = classifyFailure(pc);
+  const known = peerId || peerIdForPc(pc);
+  failures.push({ pc, at: Date.now(), reason, peerId: known || null });
+  while (failures.length > 8) failures.shift();
+  log(`Couldn't reach ${known ? displayName(known) : 'a peer'} directly: ${reason}.`, 'err');
+  scheduleRender();
+}
+
+function watchConnectTimeouts() {
+  const now = Date.now();
+  for (const pc of allPCs) {
+    if (pc._remoteAt != null && !seenFailures.has(pc) && pc.connectionState !== 'connected'
+        && pc.connectionState !== 'closed' && now - pc._remoteAt > CONNECT_TIMEOUT_MS) noteFailure(pc);
+  }
+}
+
+function peerIdForPc(pc) {
+  if (!S.room) return null;
+  for (const [id, info] of Object.entries(S.room.getPeers())) if (info.connection === pc) return id;
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+const S = {
+  secret: null, lib: null, room: null, selfId: null, roomId: null,
+  joinedAt: 0, joinStart: 0, peers: new Map(),
+  my: { cam: null, mic: null, screen: null },
+  sent: { cam: new Map(), mic: new Map(), screen: new Map() },
+  draft: { cam: null, mic: null },
+  allTracks: new Set(), trackKind: new Map(),
+  actions: {}, level: 720, pendingLevel: null, pendingCount: 0, resPref: 'auto',
+  uplinkBps: null, outHeight: null, camSince: 0, relayOpen: 0, left: false,
+};
+
+const displayName = (id) => {
+  const p = S.peers.get(id);
+  return (p && p.name) || `Unnamed ${short(id)}`;
+};
+const isCompatible = (p) => p.hello && p.proto === PROTOCOL;
+
+// ---------------------------------------------------------------------------
+// Video seats: first `videoCap` participants by (joinedAt, id) may exchange video.
+// Clock skew can misorder a joiner; joiners lift their own joinedAt above anyone they meet in
+// their first seconds, which keeps existing calls unaffected.
+// ---------------------------------------------------------------------------
+function seatOrder() {
+  const rows = [{ id: S.selfId, at: S.joinedAt }];
+  for (const p of S.peers.values()) if (isCompatible(p)) rows.push({ id: p.id, at: p.joinedAt });
+  rows.sort((a, b) => a.at - b.at || (a.id < b.id ? -1 : 1));
+  return rows.map((r) => r.id);
+}
+const seated = (id) => seatOrder().indexOf(id) !== -1 && seatOrder().indexOf(id) < videoCap;
+const iHaveVideoSeat = () => seated(S.selfId);
+
+// ---------------------------------------------------------------------------
+// Joining
+// ---------------------------------------------------------------------------
+async function joinFlow() {
+  S.secret = parseInvite();
+  if (!S.secret) return;
+  hideScreen();
+  const { roomId, password } = await deriveRoom(S.secret);
+  S.roomId = roomId;
+  S.lib = await loadVerified('trystero-nostr.js');
+
+  const iceServers = settings.lan ? [] : [{ urls: settings.stun || DEFAULT_STUN }];
+  const turnConfig = settings.turnUrl
+    ? [{ urls: settings.turnUrl, username: settings.turnUser || undefined, credential: settings.turnCred || undefined }]
+    : [];
+
+  S.joinStart = Date.now();
+  S.joinedAt = S.joinStart;
+  $('#landing').classList.add('hidden');
+  $('#room').classList.remove('hidden');
+  $('#roomInfo').textContent = `${settings.lan ? 'LAN only' : 'STUN: ' + (settings.stun || DEFAULT_STUN)}${turnConfig.length ? ' · TURN: ' + hostOf(settings.turnUrl) : ''}`;
+
+  S.room = S.lib.joinRoom({
+    appId: APP_ID,
+    password,
+    maxUsers: audioCap,
+    identity: 'none',
+    relayConfig: { urls: activeRelays(), warnOnRelayFailure: false },
+    rtcConfig: { iceServers },
+    turnConfig,
+    rtcPolyfill: TrackedPC,
+  }, roomId);
+
+  const hello = S.room.makeAction('hello');
+  const state = S.room.makeAction('state');
+  const ctl = S.room.makeAction('ctl');
+  S.actions = { hello, state, ctl };
+
+  hello.onMessage((m, ctx) => onHello(ctx.peerId, m));
+  state.onMessage((m, ctx) => onState(ctx.peerId, m));
+  ctl.onMessage((m, ctx) => onCtl(ctx.peerId, m));
+
+  S.room.onPeerJoin(({ peerId }) => onPeerJoin(peerId));
+  S.room.onPeerLeave(({ peerId }) => onPeerLeave(peerId));
+  S.room.onPeerStream((stream, ctx) => onPeerStream(ctx.peerId, stream, ctx.metadata));
+  S.room.onError(onRoomError);
+
+  S.selfId = (await S.room.getSelf()).peerId;
+  log(`Joined. You are ${short(S.selfId)}. Camera and microphone are off. Type /help.`);
+  setInterval(tick, 1000);
+  setInterval(pollStats, 2500);
+  render();
+}
+
+const hostOf = (u) => { try { return new URL(u.replace(/^turns?:/, 'http://')).host; } catch { return u; } };
+
+function onPeerJoin(peerId) {
+  const p = {
+    id: peerId, name: '', proto: null, ver: null, joinedAt: 0, hello: false, helloTimedOut: false,
+    state: { cam: false, mic: false, micMuted: false, screen: false, screenAudio: false },
+    streams: {}, joinedLocal: Date.now(), stats: null, path: null,
+  };
+  S.peers.set(peerId, p);
+  sendHello(peerId);
+  sendState(peerId);
+  log(`${short(peerId)} connected; waiting for hello.`);
+  scheduleRender();
+}
+
+function onPeerLeave(peerId) {
+  const p = S.peers.get(peerId);
+  if (!p) return;
+  log(`${displayName(peerId)} left.`);
+  for (const kind of Object.keys(S.sent)) S.sent[kind].delete(peerId);
+  S.peers.delete(peerId);
+  document.querySelectorAll(`[data-peer="${CSS.escape(peerId)}"]`).forEach((n) => n.remove());
+  if (S.peers.size === 0 && !S.left) log('Everyone else has left. The room exists only while someone is in it.');
+  reconcile();
+  scheduleRender();
+}
+
+const myName = () => (settings.name || '').trim().slice(0, 24) || `Guest-${short(S.selfId)}`;
+
+function sendHello(target) {
+  S.actions.hello?.send({ proto: PROTOCOL, ver: VERSION, name: myName(), joinedAt: S.joinedAt }, target ? { target } : undefined).catch(() => {});
+}
+function sendState(target) {
+  const m = S.my;
+  S.actions.state?.send({
+    cam: !!m.cam, mic: !!m.mic, micMuted: !!(m.mic && !m.mic.getAudioTracks()[0]?.enabled),
+    screen: !!m.screen, screenAudio: !!m.screen?.getAudioTracks().length,
+  }, target ? { target } : undefined).catch(() => {});
+}
+
+function onHello(peerId, m) {
+  const p = S.peers.get(peerId);
+  if (!p || !m || typeof m !== 'object') return;
+  p.name = String(m.name ?? '').slice(0, 24);
+  p.proto = m.proto;
+  p.ver = String(m.ver ?? '');
+  p.joinedAt = Number(m.joinedAt) || 0;
+  p.hello = true;
+  if (p.proto !== PROTOCOL) {
+    log(`${displayName(peerId)} is on an incompatible version (protocol ${p.proto}, you are on ${PROTOCOL}). No media is exchanged with them.`, 'err');
+  } else {
+    if (Date.now() - S.joinStart < 3000 && p.joinedAt >= S.joinedAt) {
+      S.joinedAt = p.joinedAt + 1;
+      sendHello();
+    }
+    log(`${displayName(peerId)} said hello (unverified name).`);
+  }
+  reconcile();
+  scheduleRender();
+}
+
+function onState(peerId, m) {
+  const p = S.peers.get(peerId);
+  if (!p || !m || typeof m !== 'object') return;
+  p.state = { cam: !!m.cam, mic: !!m.mic, micMuted: !!m.micMuted, screen: !!m.screen, screenAudio: !!m.screenAudio };
+  for (const kind of ['cam', 'mic', 'screen']) if (!p.state[kind]) detachRemote(p, kind);
+  scheduleRender();
+}
+
+function onPeerStream(peerId, stream, metadata) {
+  const p = S.peers.get(peerId);
+  if (!p) return;
+  let kind = metadata && metadata.kind;
+  if (!['cam', 'mic', 'screen'].includes(kind)) kind = stream.getVideoTracks().length ? 'cam' : 'mic';
+  p.streams[kind] = stream;
+  attachRemote(p, kind, stream);
+  scheduleRender();
+}
+
+function onRoomError(err) {
+  log(`[${err.code}] ${err.message}`, 'err');
+  if (err.code === 'room-full') {
+    showScreen({
+      title: `This room is full (${audioCap} people)`,
+      body: [
+        `Rooms are capped at ${audioCap} people. Everyone connects directly to everyone else, so each extra person adds upload for all of them. A server would be needed to go past that, and this app deliberately has none.`,
+        'The cap is provisional and has not been measured yet.',
+      ],
+      actions: [{ label: 'Leave', cls: 'danger', fn: () => leave('full') }],
+    });
+  } else if (err.code === 'peer-connect-failed') {
+    const open = failures.find((f) => !f.peerId && Date.now() - f.at < 60000);
+    if (open) open.peerId = err.peerId;
+    else failures.push({ pc: null, at: Date.now(), reason: 'no connection after exchanging introductions', peerId: err.peerId });
+    scheduleRender();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sending media (RT7): nothing is added to any connection until the user publishes.
+// ---------------------------------------------------------------------------
+function trackStream(stream, kind) {
+  for (const t of stream.getTracks()) {
+    S.allTracks.add(t);
+    S.trackKind.set(t.id, kind + (t.kind === 'audio' && kind === 'screen' ? '-audio' : ''));
+    t.addEventListener('ended', () => onLocalTrackEnded(kind, t));
+  }
+}
+
+function onLocalTrackEnded(kind, track) {
+  const live = S.my[kind];
+  if (live && live.getTracks().includes(track) && live.getVideoTracks().every((t) => t.readyState === 'ended')) {
+    if (kind === 'screen' || kind === 'cam') stopKind(kind, 'ended by the browser or device');
+  }
+}
+
+function reconcile() {
+  if (!S.room) return;
+  for (const kind of ['cam', 'mic', 'screen']) {
+    const stream = S.my[kind];
+    const sent = S.sent[kind];
+    for (const [pid, st] of [...sent]) {
+      const p = S.peers.get(pid);
+      if (!p || st !== stream || !shouldSend(p, kind)) {
+        if (p) { try { S.room.removeStream(st, { target: pid }); } catch {} }
+        sent.delete(pid);
+      }
+    }
+    if (!stream) continue;
+    for (const p of S.peers.values()) {
+      if (shouldSend(p, kind) && !sent.has(p.id)) {
+        sent.set(p.id, stream);
+        Promise.resolve(S.room.addStream(stream, { target: p.id, metadata: { kind } })).catch((e) => {
+          sent.delete(p.id);
+          log(`Could not send ${kind} to ${displayName(p.id)}: ${e.message}`, 'err');
+        });
+      }
+    }
+  }
+}
+
+function shouldSend(p, kind) {
+  if (!S.my[kind] || !isCompatible(p)) return false;
+  if (kind === 'mic') return true;
+  return seated(p.id) && iHaveVideoSeat();
+}
+
+function refuseVideo() {
+  showScreen({
+    title: `Video is full for this room (${videoCap} people)`,
+    body: [
+      `Video is limited to ${videoCap} people. Each person uploads their video once per other person, so a room of ${videoCap + 1} would degrade the call for everyone. Beyond the cap you would need a server that relays media, which this app does not have.`,
+      'You can stay in the room with audio only. The existing call is unaffected. The cap is provisional and has not been measured yet.',
+    ],
+    actions: [{ label: 'OK' }],
+  });
+}
+
+function mediaAvailable() {
+  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+    showScreen({
+      title: 'Camera and microphone are blocked on this page',
+      body: [
+        `This page was loaded from ${location.protocol}//${location.host}, which browsers treat as insecure. They refuse camera, microphone and screen capture there, with no useful error.`,
+        'Open the page over https://, or over http://localhost on the same machine.',
+      ],
+      actions: [{ label: 'OK' }],
+    });
+    return false;
+  }
+  return true;
+}
+
+async function startPreview(kind) {
+  if (!mediaAvailable()) return;
+  if (kind === 'cam' && !iHaveVideoSeat()) { refuseVideo(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia(kind === 'cam'
+      ? { video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } }
+      : { audio: { echoCancellation: true, noiseSuppression: true } });
+    const track = kind === 'cam' ? stream.getVideoTracks()[0] : stream.getAudioTracks()[0];
+    S.allTracks.add(track);
+    S.draft[kind]?.stop();
+    S.draft[kind] = track;
+    renderPreview();
+    log(`${kind === 'cam' ? 'Camera' : 'Microphone'} preview is on locally. Nobody receives it until you send it. Use /send or /cancel.`);
+  } catch (e) {
+    log(`Could not start ${kind === 'cam' ? 'camera' : 'microphone'}: ${e.message}`, 'err');
+  }
+}
+
+function renderPreview() {
+  let box = $('#preview');
+  const tracks = [S.draft.cam, S.draft.mic].filter(Boolean);
+  if (!tracks.length) { box?.remove(); return; }
+  if (!box) {
+    box = el('div', { id: 'preview', class: 'card' });
+    $('#stage').prepend(box);
+  }
+  const n = S.peers.size;
+  box.replaceChildren();
+  box.append(el('strong', { text: 'Preview — only you can see or hear this' }));
+  if (S.draft.cam) {
+    const v = el('video', { autoplay: '', muted: '', playsinline: '' });
+    v.muted = true;
+    v.srcObject = new MediaStream([S.draft.cam]);
+    box.append(el('div', { style: 'margin-top:8px' }), v);
+  }
+  box.append(el('p', { class: 'dim', text: `Sending will share ${[S.draft.cam && 'your camera', S.draft.mic && 'your microphone'].filter(Boolean).join(' and ')} with ${n} ${n === 1 ? 'person' : 'people'} in the room.` }));
+  box.append(el('button', { class: 'primary', text: 'Send to the room', onclick: sendDraft }), ' ', el('button', { text: 'Cancel', onclick: cancelDraft }));
+}
+
+function cancelDraft() {
+  for (const k of ['cam', 'mic']) { S.draft[k]?.stop(); S.draft[k] = null; }
+  renderPreview();
+}
+
+function sendDraft() {
+  for (const kind of ['cam', 'mic']) {
+    const t = S.draft[kind];
+    if (!t) continue;
+    S.draft[kind] = null;
+    const stream = new MediaStream([t]);
+    trackStream(stream, kind);
+    S.my[kind] = stream;
+    if (kind === 'cam') S.camSince = Date.now();
+  }
+  renderPreview();
+  sendState();
+  reconcile();
+  renderSelfTiles();
+  scheduleRender();
+  log('Sending to the room. Check the roster for who actually receives it.');
+}
+
+function stopKind(kind, why = 'stopped') {
+  const stream = S.my[kind];
+  if (!stream) return;
+  S.my[kind] = null;
+  reconcile();
+  stream.getTracks().forEach((t) => t.stop());
+  sendState();
+  renderSelfTiles();
+  scheduleRender();
+  log(`${kind === 'cam' ? 'Camera' : kind === 'mic' ? 'Microphone' : 'Screen share'} ${why}.`);
+}
+
+function toggleMic() {
+  if (S.my.mic) {
+    const t = S.my.mic.getAudioTracks()[0];
+    t.enabled = !t.enabled;
+    sendState();
+    log(t.enabled ? 'Unmuted.' : 'Muted. Your microphone is still open locally; use /leave or reload to release it.');
+    scheduleRender();
+  } else if (S.draft.mic) sendDraft();
+  else startPreview('mic');
+}
+function toggleCam() {
+  if (S.my.cam) stopKind('cam');
+  else if (S.draft.cam) sendDraft();
+  else startPreview('cam');
+}
+
+const isChromium = () => !!navigator.userAgentData?.brands?.some((b) => /Chromium/i.test(b.brand));
+const screenSupported = () => !!navigator.mediaDevices?.getDisplayMedia;
+
+async function toggleShare() {
+  if (S.my.screen) { stopKind('screen'); return; }
+  if (!screenSupported()) { log('Screen sharing is not available in this browser.', 'err'); return; }
+  if (!mediaAvailable()) return;
+  if (!iHaveVideoSeat()) { refuseVideo(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: isChromium() });
+    trackStream(stream, 'screen');
+    S.my.screen = stream;
+    sendState();
+    reconcile();
+    renderSelfTiles();
+    scheduleRender();
+    const withAudio = stream.getAudioTracks().length > 0;
+    log(withAudio ? 'Sharing screen with audio.' : `Sharing screen without audio${isChromium() ? ' (tick "share audio" in the picker to include it)' : ' (this browser does not share screen audio)'}.`);
+  } catch (e) {
+    log(`Screen share not started: ${e.message}`, 'err');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Tiles
+// ---------------------------------------------------------------------------
+function tileFor(key, peerId, label, cls = '') {
+  let t = document.querySelector(`[data-tile="${CSS.escape(key)}"]`);
+  if (!t) {
+    t = el('div', { class: 'tile ' + cls, 'data-tile': key });
+    if (peerId) t.setAttribute('data-peer', peerId);
+    t.append(el('div', { class: 'avatar', text: '' }), el('div', { class: 'label', text: label }));
+    $('#tiles').append(t);
+  }
+  t.querySelector('.label').textContent = label;
+  return t;
+}
+
+function setTileVideo(tile, stream, muted) {
+  let v = tile.querySelector('video');
+  if (!stream) { v?.remove(); tile.querySelector('.avatar').classList.remove('hidden'); return; }
+  if (!v) {
+    v = el('video', { autoplay: '', playsinline: '' });
+    tile.prepend(v);
+  }
+  v.muted = muted;
+  if (v.srcObject !== stream) v.srcObject = stream;
+  v.play?.().catch(() => {});
+  tile.querySelector('.avatar').classList.add('hidden');
+}
+
+function attachRemote(p, kind, stream) {
+  if (kind === 'mic') {
+    let a = document.querySelector(`audio[data-peer="${CSS.escape(p.id)}"][data-kind="mic"]`);
+    if (!a) { a = el('audio', { autoplay: '', 'data-peer': p.id, 'data-kind': 'mic' }); document.body.append(a); }
+    a.srcObject = stream;
+    a.play?.().catch(() => log('Your browser blocked audio playback; click anywhere on the page.', 'err'));
+    return;
+  }
+  const key = kind === 'screen' ? p.id + ':screen' : p.id;
+  const tile = tileFor(key, p.id, kind === 'screen' ? `${displayName(p.id)} — screen` : displayName(p.id), kind === 'screen' ? 'screen' : '');
+  setTileVideo(tile, stream, false);
+}
+
+function detachRemote(p, kind) {
+  delete p.streams[kind];
+  if (kind === 'mic') {
+    document.querySelector(`audio[data-peer="${CSS.escape(p.id)}"][data-kind="mic"]`)?.remove();
+    return;
+  }
+  const key = kind === 'screen' ? p.id + ':screen' : p.id;
+  const tile = document.querySelector(`[data-tile="${CSS.escape(key)}"]`);
+  if (!tile) return;
+  if (kind === 'screen') tile.remove(); else setTileVideo(tile, null);
+}
+
+function renderSelfTiles() {
+  const t = tileFor('self', null, `You (${myName()})`);
+  setTileVideo(t, S.my.cam, true);
+  const sc = document.querySelector('[data-tile="self:screen"]');
+  if (S.my.screen) setTileVideo(tileFor('self:screen', null, 'Your screen (as sent)', 'screen'), S.my.screen, true);
+  else sc?.remove();
+}
+
+function renderPeerTiles() {
+  for (const p of S.peers.values()) {
+    const t = tileFor(p.id, p.id, displayName(p.id));
+    let badge = t.querySelector('.badge');
+    const msg = !p.hello ? 'no hello yet' : p.proto !== PROTOCOL ? 'incompatible version' : !seated(p.id) ? 'audio only (video limit)' : '';
+    if (msg) {
+      if (!badge) { badge = el('div', { class: 'badge' }); t.append(badge); }
+      badge.textContent = msg;
+    } else badge?.remove();
+    const av = t.querySelector('.avatar');
+    av.textContent = (displayName(p.id)[0] || '?').toUpperCase();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Roster (RT4) and status (RT13, RT18)
+// ---------------------------------------------------------------------------
+function receivesOf(pc) {
+  const out = [];
+  if (!pc) return out;
+  for (const s of pc.getSenders()) {
+    const t = s.track;
+    if (!t || t.readyState !== 'live') continue;
+    const kind = S.trackKind.get(t.id);
+    if (!kind) continue;
+    out.push({ kind, muted: !t.enabled });
+  }
+  return out;
+}
+
+function rosterRows() {
+  const peerInfo = S.room ? S.room.getPeers() : {};
+  const rows = [];
+  const seenPcs = new Set();
+  for (const [id, info] of Object.entries(peerInfo)) {
+    const p = S.peers.get(id) || { id, name: '', hello: false, state: {} };
+    seenPcs.add(info.connection);
+    rows.push({ id, p, pc: info.connection, orphan: false });
+  }
+  for (const p of S.peers.values()) {
+    if (!peerInfo[p.id]) rows.push({ id: p.id, p, pc: null, orphan: false });
+  }
+  for (const pc of allPCs) {
+    if (pc.connectionState === 'connected' && !seenPcs.has(pc)) rows.push({ id: null, p: null, pc, orphan: true });
+  }
+  return rows;
+}
+
+function connectedPcCount() {
+  let n = 0;
+  for (const pc of allPCs) if (pc.connectionState === 'connected') n++;
+  return n;
+}
+
+function rt4Check() {
+  const rows = rosterRows();
+  const rowsWithConn = rows.filter((r) => r.pc && r.pc.connectionState === 'connected').length;
+  const pcs = connectedPcCount();
+  return { rosterWithConnection: rowsWithConn, connections: pcs, ok: rowsWithConn === pcs };
+}
+
+function pathLabel(p) {
+  const st = p && p.stats;
+  if (!st || !st.path) return null;
+  return st.path;
+}
+
+function relayStatus() {
+  let sockets = {};
+  try { sockets = S.lib?.getRelaySockets?.() || {}; } catch {}
+  const urls = Object.keys(sockets);
+  const open = urls.filter((u) => sockets[u].readyState === 1).length;
+  S.relayOpen = open;
+  return { total: Math.max(urls.length, activeRelays().length), open, urls };
+}
+
+function renderStatus() {
+  const box = $('#status');
+  const rs = relayStatus();
+  const age = Date.now() - S.joinStart;
+  const peers = S.peers.size;
+  const msgs = [];
+  if (rs.open === 0 && age > RELAY_GRACE_MS && peers === 0) {
+    msgs.push({ cls: 'bad', text: "Can't reach the introduction servers; others may be waiting." });
+  } else if (rs.open === 0 && age <= RELAY_GRACE_MS) {
+    msgs.push({ cls: 'info', text: 'Connecting to the introduction servers…' });
+  } else if (peers === 0 && !failures.some((x) => Date.now() - x.at < 5 * 60000)) {
+    msgs.push({ cls: 'info', text: 'No one else is here yet. Share the invite link; the room exists only while someone is in it.' });
+  } else if (rs.open === 0) {
+    msgs.push({ cls: 'warn', text: "Can't reach the introduction servers. People already connected stay connected; no one new can join." });
+  }
+  for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
+    const who = f.peerId ? displayName(f.peerId) : 'a peer';
+    msgs.push({ cls: 'bad', text: `Couldn't reach ${who} directly (${f.reason}).` });
+  }
+  const sig = JSON.stringify(msgs);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.replaceChildren(...msgs.map((m) => el('div', { class: 'banner ' + m.cls, text: m.text })));
+}
+
+function chip(text, cls = '') { return el('span', { class: 'chip ' + cls, text }); }
+
+function renderRoster() {
+  const box = $('#roster');
+  const rows = rosterRows();
+  const kids = [];
+
+  const me = el('div', { class: 'rrow' });
+  me.append(el('div', { class: 'nm', text: `You — ${myName()}` }), el('div', { class: 'meta', text: `id ${short(S.selfId)} · sending: ${mySendingSummary()}` }));
+  kids.push(me);
+
+  for (const r of rows) {
+    const row = el('div', { class: 'rrow' });
+    if (r.orphan) {
+      row.append(el('div', { class: 'nm', text: 'Unidentified connection' }));
+      row.append(el('div', { class: 'meta', text: 'Connected but has not completed the handshake. Listed because it may receive your media.' }));
+      appendReceives(row, r.pc);
+      kids.push(row);
+      continue;
+    }
+    const p = r.p;
+    const nm = el('div', { class: 'nm' });
+    nm.append(document.createTextNode(displayName(r.id)), el('span', { class: 'dim', text: ' (unverified name)', title: 'Display names are self-asserted. Nothing here proves who this is.' }));
+    row.append(nm);
+    const metaParts = [`id ${short(r.id)}`];
+    if (p.ver) metaParts.push(`v${p.ver}`);
+    const lab = pathLabel(p);
+    if (lab) metaParts.push(lab);
+    row.append(el('div', { class: 'meta', text: metaParts.join(' · ') }));
+    if (!p.hello) {
+      const late = Date.now() - (p.joinedLocal || Date.now()) > HELLO_TIMEOUT_MS;
+      row.append(chip(late ? 'no hello (not rtc-webCLI, or an older build)' : 'waiting for hello…', late ? 'warn' : ''));
+    } else if (p.proto !== PROTOCOL) {
+      row.append(chip(`${displayName(r.id)} is on an incompatible version (protocol ${p.proto}; yours is ${PROTOCOL})`, 'bad'));
+    } else if (!seated(r.id)) {
+      row.append(chip(`audio only — video limit of ${videoCap} reached`, 'warn'));
+    }
+    if (r.pc && r.pc.connectionState !== 'connected') row.append(chip(`connection: ${r.pc.connectionState}`, 'warn'));
+    row.append(el('div', { class: 'meta', text: 'receives from you:' }));
+    appendReceives(row, r.pc);
+    const sends = peerSendingSummary(p);
+    row.append(el('div', { class: 'meta', text: `sends to you: ${sends}` }));
+    row.append(el('button', { text: `Ask everyone to disconnect ${displayName(r.id)}`, title: 'A request. Peers that ignore it stay connected, and so can they. There is no host who can enforce removal.', onclick: () => requestRemove(r.id) }));
+    kids.push(row);
+  }
+
+  for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
+    const row = el('div', { class: 'rrow fail' });
+    row.append(el('div', { class: 'nm', text: `Couldn't reach ${f.peerId ? displayName(f.peerId) + ' (' + short(f.peerId) + ')' : 'a peer'} directly` }));
+    row.append(el('div', { class: 'meta', text: `${f.reason} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer` }));
+    kids.push(row);
+  }
+  box.replaceChildren(...kids);
+}
+
+function appendReceives(row, pc) {
+  const rec = receivesOf(pc);
+  if (!rec.length) { row.append(chip('nothing')); return; }
+  for (const r of rec) {
+    const label = r.kind === 'cam' ? 'video' : r.kind === 'mic' ? (r.muted ? 'audio (muted)' : 'audio') : r.kind === 'screen' ? 'screen' : 'screen audio';
+    row.append(chip(label, r.muted ? 'warn' : 'ok'));
+  }
+}
+
+function mySendingSummary() {
+  const parts = [];
+  if (S.my.cam) parts.push('video');
+  if (S.my.mic) parts.push(S.my.mic.getAudioTracks()[0]?.enabled ? 'audio' : 'audio (muted)');
+  if (S.my.screen) parts.push('screen');
+  return parts.length ? parts.join(', ') : 'nothing';
+}
+function peerSendingSummary(p) {
+  const s = p.state || {};
+  const parts = [];
+  if (s.cam) parts.push('video');
+  if (s.mic) parts.push(s.micMuted ? 'audio (muted)' : 'audio');
+  if (s.screen) parts.push('screen');
+  return parts.length ? parts.join(', ') : 'nothing';
+}
+
+function renderControls() {
+  const mic = $('#btnMic'), cam = $('#btnCam'), share = $('#btnShare');
+  if (S.my.mic) {
+    const on = S.my.mic.getAudioTracks()[0]?.enabled;
+    mic.textContent = on ? 'Mic: live (click to mute)' : 'Mic: muted (click to unmute)';
+    mic.className = on ? 'on' : 'warn';
+  } else { mic.textContent = S.draft.mic ? 'Mic: previewing (click to send)' : 'Mic: off'; mic.className = ''; }
+  cam.textContent = S.my.cam ? 'Camera: live (click to stop)' : S.draft.cam ? 'Camera: previewing (click to send)' : 'Camera: off';
+  cam.className = S.my.cam ? 'on' : '';
+  if (!screenSupported()) {
+    share.classList.add('hidden');
+    $('#why').textContent = 'Screen sharing is not available in this browser.';
+  } else {
+    share.textContent = S.my.screen ? 'Stop sharing' : 'Share screen';
+    share.className = S.my.screen ? 'on' : '';
+    $('#why').textContent = isChromium() ? 'Screen audio: only if you tick "share audio" in the picker.' : 'Screen audio is not offered in this browser.';
+  }
+}
+
+function render() {
+  if (!S.room) return;
+  renderStatus();
+  renderRoster();
+  renderPeerTiles();
+  renderSelfTiles();
+  renderControls();
+  const chk = rt4Check();
+  $('#rt4check').textContent = `roster ${chk.rosterWithConnection} / connections ${chk.connections} ${chk.ok ? '✓' : '⚠ mismatch'}`;
+  const n = S.peers.size + 1;
+  $('#roomInfo').dataset.n = n;
+  document.title = `rtc-webCLI · ${n} here`;
+}
+
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  queueMicrotask(() => { renderQueued = false; render(); });
+}
+
+function tick() {
+  if (S.left) return;
+  watchConnectTimeouts();
+  for (const p of S.peers.values()) {
+    if (!p.hello && !p.helloTimedOut && Date.now() - p.joinedLocal > HELLO_TIMEOUT_MS) {
+      p.helloTimedOut = true;
+      log(`${short(p.id)} never sent hello: not rtc-webCLI, or an older build. It is shown in the roster and gets no media.`, 'err');
+    }
+  }
+  render();
+}
+
+// ---------------------------------------------------------------------------
+// Stats, path, and send quality (RT10, RT15, RT19)
+// ---------------------------------------------------------------------------
+async function pollStats() {
+  if (S.left || !S.room) return;
+  let uplink = null;
+  let outHeight = null;
+  const info = S.room.getPeers();
+  for (const [id, pi] of Object.entries(info)) {
+    const pc = pi.connection;
+    const p = S.peers.get(id);
+    if (!pc || !p || pc.connectionState !== 'connected') continue;
+    try {
+      const reports = await pc.getStats();
+      const by = new Map();
+      reports.forEach((r) => by.set(r.id, r));
+      let pair = null;
+      reports.forEach((r) => { if (r.type === 'transport' && r.selectedCandidatePairId) pair = by.get(r.selectedCandidatePairId); });
+      if (!pair) reports.forEach((r) => { if (r.type === 'candidate-pair' && (r.selected || (r.nominated && r.state === 'succeeded'))) pair = r; });
+      const st = { path: null, pathKind: null, at: Date.now(), outKbps: null };
+      if (pair) {
+        const l = by.get(pair.localCandidateId), r = by.get(pair.remoteCandidateId);
+        const lt = l?.candidateType, rt = r?.candidateType;
+        if (lt === 'relay' || rt === 'relay') {
+          const host = lt === 'relay' && l?.url ? hostOf(l.url) : (settings.turnUrl ? hostOf(settings.turnUrl) : 'a relay');
+          st.pathKind = 'relay';
+          st.path = `relay — media passes through ${host} (still DTLS-SRTP encrypted)`;
+        } else if (lt === 'host' && rt === 'host') { st.pathKind = 'direct-lan'; st.path = 'direct (local network)'; }
+        else { st.pathKind = 'direct-stun'; st.path = 'direct (peer-to-peer, address found via STUN)'; }
+        if (typeof pair.availableOutgoingBitrate === 'number') uplink = Math.max(uplink ?? 0, pair.availableOutgoingBitrate);
+      }
+      reports.forEach((r) => {
+        if (r.type === 'outbound-rtp' && r.kind === 'video') {
+          if (p.stats?.prevBytes != null && r.timestamp > p.stats.prevTs) st.outKbps = ((r.bytesSent - p.stats.prevBytes) * 8) / (r.timestamp - p.stats.prevTs);
+          st.prevBytes = r.bytesSent; st.prevTs = r.timestamp;
+          if (r.frameHeight) outHeight = Math.max(outHeight ?? 0, r.frameHeight);
+        }
+      });
+      p.stats = { ...st, prevBytes: st.prevBytes ?? p.stats?.prevBytes, prevTs: st.prevTs ?? p.stats?.prevTs };
+    } catch { /* connection closed mid-poll */ }
+  }
+  S.uplinkBps = uplink;
+  S.outHeight = outHeight;
+  await applyQuality();
+  scheduleRender();
+}
+
+const LEVELS = { 720: { scale: 1, maxBitrate: 1500000 }, 360: { scale: 2, maxBitrate: 500000 }, 180: { scale: 4, maxBitrate: 200000 } };
+
+// Pure policy, exposed for tests: choose the send height from the per-recipient uplink share.
+function chooseLevel(perPeerBps) {
+  if (perPeerBps == null) return 720;
+  if (perPeerBps >= 1200000) return 720;
+  if (perPeerBps >= 450000) return 360;
+  return 180;
+}
+
+function videoRecipients() {
+  return [...S.sent.cam.keys()].filter((id) => S.peers.has(id));
+}
+
+async function applyQuality() {
+  if (!S.my.cam) { renderQuality(); return; }
+  const recips = videoRecipients();
+  let want;
+  if (S.resPref !== 'auto') want = Number(S.resPref);
+  else if (Date.now() - S.camSince < WARMUP_MS) want = 720; // the bandwidth estimate starts low and ramps up
+  else want = chooseLevel(S.uplinkBps != null && recips.length ? S.uplinkBps / recips.length : null);
+  if (want !== S.level) {
+    if (S.resPref !== 'auto' || (S.pendingLevel === want && ++S.pendingCount >= 2)) {
+      S.level = want; S.pendingLevel = null; S.pendingCount = 0;
+    } else if (S.pendingLevel !== want) { S.pendingLevel = want; S.pendingCount = 1; }
+  } else { S.pendingLevel = null; S.pendingCount = 0; }
+  const track = S.my.cam.getVideoTracks()[0];
+  const lvl = LEVELS[S.level];
+  const info = S.room.getPeers();
+  for (const id of recips) {
+    const pc = info[id]?.connection;
+    if (!pc) continue;
+    for (const s of pc.getSenders()) {
+      if (s.track !== track) continue;
+      try {
+        const params = s.getParameters();
+        if (!params.encodings?.length) params.encodings = [{}];
+        const enc0 = params.encodings[0];
+        if (enc0.scaleResolutionDownBy !== lvl.scale || enc0.maxBitrate !== lvl.maxBitrate) {
+          enc0.scaleResolutionDownBy = lvl.scale;
+          enc0.maxBitrate = lvl.maxBitrate;
+          await s.setParameters(params);
+        }
+      } catch { /* sender not ready */ }
+    }
+  }
+  renderQuality();
+}
+
+function renderQuality() {
+  const line = $('#qualityLine');
+  if (!S.my.cam) { line.textContent = ''; return; }
+  const n = videoRecipients().length;
+  const h = S.outHeight || (S.my.cam.getVideoTracks()[0]?.getSettings().height ?? 720) / LEVELS[S.level].scale;
+  const why = S.resPref === 'auto' ? (S.level < 720 && S.uplinkBps ? ` (uplink ≈ ${Math.round(S.uplinkBps / 1000)} kbps)` : '') : ' (set by you)';
+  line.textContent = `Sending ${Math.round(h)}p to ${n} ${n === 1 ? 'person' : 'people'}${why}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Removal request and moving the room (RT5)
+// ---------------------------------------------------------------------------
+function requestRemove(id) {
+  const name = displayName(id);
+  const peers = [...S.peers.keys()].filter((x) => x !== id);
+  S.actions.ctl.send({ t: 'remove', target: id }, peers.length ? { target: peers } : undefined).catch(() => {});
+  S.actions.ctl.send({ t: 'remove', target: id }, { target: id }).catch(() => {});
+  closePeer(id);
+  log(`Asked everyone to disconnect ${name}. Peers that ignore this stay connected, and ${name} can reconnect. The roster shows who is actually connected. For real removal use /move.`);
+}
+
+function closePeer(id) {
+  try { S.room.getPeers()[id]?.connection?.close(); } catch {}
+}
+
+function onCtl(from, m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'remove' && typeof m.target === 'string') {
+    if (m.target === S.selfId) {
+      showScreen({
+        title: 'Others asked you to disconnect',
+        body: `${displayName(from)} (unverified name) asked the room to disconnect you. Nothing forces you to leave, and nothing forces them to stay connected to you.`,
+        actions: [{ label: 'Leave', cls: 'danger', fn: () => leave('asked') }, { label: 'Stay' }],
+      });
+    } else {
+      log(`${displayName(from)} asked everyone to disconnect ${displayName(m.target)}. Complying with this request.`);
+      closePeer(m.target);
+    }
+  } else if (m.t === 'move' && typeof m.s === 'string' && /^[A-Za-z0-9_-]{22}$/.test(m.s)) {
+    showScreen({
+      title: 'The room is moving',
+      body: `${displayName(from)} (unverified name) invited you to a new room and is leaving this one. Joining ends your session here.`,
+      actions: [{ label: 'Join the new room', cls: 'primary', fn: () => goToRoom(m.s) }, { label: 'Stay here' }],
+    });
+  }
+}
+
+function goToRoom(secretB64) {
+  stopAllTracks();
+  sessionStorage.setItem(AUTOJOIN_KEY, '1');
+  location.hash = '#k=' + secretB64;
+  location.reload();
+}
+
+async function moveRoom(ids) {
+  const fresh = crypto.getRandomValues(new Uint8Array(16));
+  const s = b64u.enc(fresh);
+  const targets = ids.filter((id) => S.peers.has(id));
+  if (targets.length) await S.actions.ctl.send({ t: 'move', s }, { target: targets }).catch(() => {});
+  log(`Moving to a new room; invited ${targets.length} ${targets.length === 1 ? 'person' : 'people'} over the encrypted connection. Everyone else is left behind.`);
+  await sleep(800);
+  goToRoom(s);
+}
+
+function openMoveDialog() {
+  const peers = [...S.peers.values()];
+  const form = el('div');
+  const boxes = peers.map((p) => {
+    const cb = el('input', { type: 'checkbox' });
+    cb.checked = true;
+    cb.dataset.id = p.id;
+    form.append(el('label', { class: 'chk' }, cb, ` ${displayName(p.id)} (unverified, ${short(p.id)})`));
+    return cb;
+  });
+  if (!peers.length) form.append(el('p', { class: 'dim', text: 'No one else is here. You will just get a fresh, empty room.' }));
+  showScreen({
+    title: 'Move room',
+    body: 'Moving creates a new secret and invites only the people you tick, over the encrypted peer connection. People you leave out never learn the new link. This is the only real way to remove someone.',
+    node: form,
+    actions: [{ label: 'Move', cls: 'primary', fn: () => moveRoom(boxes.filter((b) => b.checked).map((b) => b.dataset.id)) }, { label: 'Cancel' }],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Leaving (RT6, RT21)
+// ---------------------------------------------------------------------------
+function stopAllTracks() {
+  for (const k of ['cam', 'mic']) { S.draft[k]?.stop(); S.draft[k] = null; }
+  for (const kind of ['cam', 'mic', 'screen']) {
+    S.my[kind]?.getTracks().forEach((t) => t.stop());
+    S.my[kind] = null;
+  }
+  S.allTracks.forEach((t) => t.stop());
+}
+const allTracksEnded = () => [...S.allTracks].every((t) => t.readyState === 'ended');
+
+async function leave(why) {
+  if (S.left) return;
+  S.left = true;
+  const others = S.peers.size;
+  stopAllTracks();
+  try { await S.room?.leave(); } catch {}
+  for (const pc of [...allPCs]) { try { pc.close(); } catch {} }
+  const ended = allTracksEnded();
+  $('#room').classList.add('hidden');
+  document.querySelectorAll('audio[data-kind]').forEach((a) => a.remove());
+  const body = [];
+  if (why === 'full') body.push('The room was full, so you did not join.');
+  else if (others === 0) body.push('You were the last one here. This room no longer exists anywhere. Whoever opens the link next starts a fresh, empty room.');
+  else body.push(`You left. The room continues for ${others} ${others === 1 ? 'other person' : 'other people'} while any of them stays.`);
+  body.push(S.allTracks.size
+    ? `Camera, microphone and screen capture stopped. Verified: ${[...S.allTracks].filter((t) => t.readyState === 'ended').length} of ${S.allTracks.size} tracks report "ended".${ended ? '' : ' Some did not; reload this page.'}`
+    : 'You never turned on camera, microphone or screen share.');
+  showScreen({ title: 'You left the room', body, actions: [{ label: 'Back to start', fn: () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); } }] });
+}
+
+addEventListener('pagehide', () => { try { stopAllTracks(); } catch {} });
+
+// ---------------------------------------------------------------------------
+// Invite / QR (RT1)
+// ---------------------------------------------------------------------------
+async function copyInvite() {
+  await resolveInviteBase();
+  const url = inviteUrl(S.secret);
+  if (inviteIsLoopback()) log('Warning: no LAN address found, so this link only works on this device.', 'err');
+  try { await navigator.clipboard.writeText(url); log('Invite link copied. The secret is in the part after #, which is never sent to any server.'); }
+  catch { log(`Copy failed. Invite link: ${url}`, 'err'); }
+}
+
+async function showQr() {
+  const qrcode = (await loadVerified('qrcode.js')).default;
+  await resolveInviteBase();
+  const url = inviteUrl(S.secret);
+  const qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  const n = qr.getModuleCount();
+  const scale = 6, quiet = 4;
+  const canvas = el('canvas', { id: 'qrCanvas', width: (n + quiet * 2) * scale, height: (n + quiet * 2) * scale });
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
+  const node = el('div', {}, canvas, el('p', { class: 'dim mono', text: url, style: 'word-break:break-all' }), el('p', { class: 'dim', text: 'Anyone who scans this can join. It encodes exactly the same link as "Copy invite".' }),
+    inviteIsLoopback() ? el('p', { class: 'banner warn', text: 'No LAN address was found, so this link only works on this device. Restart the server with npm start and reopen the page.' }) : null);
+  showScreen({ title: 'Invite QR', node, actions: [{ label: 'Close' }] });
+}
+
+// ---------------------------------------------------------------------------
+// Console commands (RT19). Every command maps to a GUI control and vice versa.
+// ---------------------------------------------------------------------------
+function findPeer(sel) {
+  if (!sel) return null;
+  const peers = [...S.peers.values()];
+  if (/^#?\d+$/.test(sel)) return peers[Number(sel.replace('#', '')) - 1] || null;
+  const s = sel.toLowerCase();
+  return peers.find((p) => p.id.toLowerCase().startsWith(s)) || peers.find((p) => (p.name || '').toLowerCase().startsWith(s)) || null;
+}
+
+const COMMANDS = {
+  help() {
+    log([
+      '/peers            list everyone connected and what they receive',
+      '/path [peer]      show the connection path (direct or relay)',
+      '/stats <peer>     raw getStats() reports for that peer',
+      '/cap              room and video caps (provisional)',
+      '/mic | /mute      start the microphone preview, send it, or mute/unmute',
+      '/cam              camera preview, send, or stop',
+      '/share            start or stop screen share',
+      '/send | /cancel   send or discard a camera/mic preview',
+      '/res auto|720|360|180   send quality',
+      '/remove <peer>    ask everyone to disconnect a peer (a request, not enforcement)',
+      '/move [all|peer…] move to a new room with the chosen people',
+      '/invite | /qr     copy the invite link / show its QR code',
+      '/lan on|off       LAN only (no STUN) — applies on next join',
+      '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
+      '/relays           introduction servers and their state',
+      '/egress           every host this page is contacting',
+      '/about            version, protocol, pinned library hashes',
+      '/leave            leave and stop every track',
+    ].join('\n'));
+  },
+  peers() {
+    const rows = rosterRows();
+    if (!rows.length) { log('No one else is connected.'); return; }
+    rows.forEach((r, i) => {
+      if (r.orphan) { log(`#${i + 1} (unidentified connection) receives: ${receivesOf(r.pc).map((x) => x.kind).join(', ') || 'nothing'}`); return; }
+      const rec = receivesOf(r.pc).map((x) => x.kind + (x.muted ? ' (muted)' : '')).join(', ') || 'nothing';
+      log(`#${i + 1} ${displayName(r.id)} [unverified] id ${short(r.id)} v${r.p.ver || '?'} ${pathLabel(r.p) || ''}\n     receives from you: ${rec}\n     sends to you: ${peerSendingSummary(r.p)}`);
+    });
+    const c = rt4Check();
+    log(`roster ${c.rosterWithConnection} / connections ${c.connections} ${c.ok ? 'ok' : 'MISMATCH'}`, c.ok ? '' : 'err');
+  },
+  path(args) {
+    const list = args[0] ? [findPeer(args[0])].filter(Boolean) : [...S.peers.values()];
+    if (!list.length) { log(args[0] ? `No peer matches "${args[0]}".` : 'No one else is connected.', args[0] ? 'err' : ''); return; }
+    for (const p of list) log(`${displayName(p.id)}: ${pathLabel(p) || 'not measured yet (wait a few seconds)'}`);
+  },
+  async stats(args) {
+    const p = findPeer(args[0]);
+    if (!p) { log('Usage: /stats <peer>   (see /peers)', 'err'); return; }
+    const pc = S.room.getPeers()[p.id]?.connection;
+    if (!pc) { log(`No connection to ${displayName(p.id)}.`, 'err'); return; }
+    const reports = await pc.getStats();
+    reports.forEach((r) => log(`${r.type} ${JSON.stringify(r)}`));
+  },
+  cap() {
+    const n = S.peers.size + 1;
+    log(`Room cap: ${audioCap} people (hard refusal beyond). Video cap: ${videoCap} people. Both are provisional and NOT measured yet.\nHere now: ${n}. Your video seat: ${iHaveVideoSeat() ? 'yes' : 'no (audio only)'}.\nSeat order: ${seatOrder().map((id, i) => `${i + 1}.${id === S.selfId ? 'you' : displayName(id)}`).join('  ')}`);
+  },
+  mic() { toggleMic(); },
+  mute() { toggleMic(); },
+  cam() { toggleCam(); },
+  share() { return toggleShare(); },
+  send() { if (S.draft.cam || S.draft.mic) sendDraft(); else log('No preview to send. Use /cam or /mic first.', 'err'); },
+  cancel() { cancelDraft(); log('Preview discarded and its tracks stopped.'); },
+  res(args) {
+    if (!['auto', '720', '360', '180'].includes(args[0])) { log('Usage: /res auto|720|360|180', 'err'); return; }
+    S.resPref = args[0]; $('#selRes').value = args[0];
+    applyQuality();
+    log(`Send quality: ${args[0]}.`);
+  },
+  remove(args) {
+    const p = findPeer(args[0]);
+    if (!p) { log('Usage: /remove <peer>   (see /peers)', 'err'); return; }
+    requestRemove(p.id);
+  },
+  move(args) {
+    const ids = !args.length || args[0] === 'all' ? [...S.peers.keys()] : args.map((a) => findPeer(a)?.id).filter(Boolean);
+    return moveRoom(ids);
+  },
+  invite() { return copyInvite(); },
+  qr() { return showQr(); },
+  lan(args) {
+    if (!['on', 'off'].includes(args[0])) { log(`LAN only is ${settings.lan ? 'on' : 'off'}. Usage: /lan on|off (applies on next join)`); return; }
+    settings.lan = args[0] === 'on'; saveSettings();
+    log(`LAN only ${settings.lan ? 'on: STUN will not be contacted' : 'off'}. Takes effect the next time you join a room.`);
+  },
+  turn(args) {
+    if (!args.length) { log(settings.turnUrl ? `TURN: ${hostOf(settings.turnUrl)}` : 'No TURN server configured.'); return; }
+    if (args[0] === 'off') { settings.turnUrl = settings.turnUser = settings.turnCred = ''; } else { [settings.turnUrl, settings.turnUser = '', settings.turnCred = ''] = args; }
+    saveSettings();
+    log(settings.turnUrl ? `TURN set to ${hostOf(settings.turnUrl)}. If used, media passes through that host. Applies on next join.` : 'TURN removed. Applies on next join.');
+  },
+  relays() {
+    const rs = relayStatus();
+    log(`Introduction servers (${customRelays().length ? 'custom list' : 'built-in list'}): ${rs.open} of ${rs.total} reachable`);
+    const sockets = S.lib?.getRelaySockets?.() || {};
+    for (const u of activeRelays()) log(`  ${u}  ${['connecting', 'open', 'closing', 'closed'][sockets[u]?.readyState] ?? 'not started'}`);
+  },
+  egress() {
+    log(['Hosts this page contacts:',
+      `  page origin   ${location.host || location.protocol}`,
+      ...activeRelays().map((u) => `  relay         ${new URL(u).host}`),
+      settings.lan ? '  STUN          none (LAN only)' : `  STUN          ${hostOf(settings.stun || DEFAULT_STUN)}`,
+      settings.turnUrl ? `  TURN          ${hostOf(settings.turnUrl)} (yours)` : '  TURN          none',
+      '  peers         each connected peer, directly (their IP addresses are visible to each other)'].join('\n'));
+  },
+  about() {
+    log([`rtc-webCLI ${VERSION}  protocol ${PROTOCOL}`,
+      ...Object.entries(PINS).map(([f, p]) => `lib/${f}  ${p.package}@${p.version}  sha256:${p.sha256}  (verified at load)`)].join('\n'));
+  },
+  leave() { return leave('user'); },
+};
+
+async function runCommand(line) {
+  const parts = line.trim().replace(/^\//, '').split(/\s+/);
+  const name = parts.shift().toLowerCase();
+  log('/' + [name, ...parts].join(' '), 'cmd');
+  const fn = COMMANDS[name];
+  if (!fn) { log(`Unknown command /${name}. Try /help.`, 'err'); return; }
+  try { await fn(parts); } catch (e) { log(`/${name} failed: ${e.message}`, 'err'); }
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+function bootLanding() {
+  const nameIn = $('#name');
+  nameIn.value = settings.name;
+  $('#setLan').checked = settings.lan;
+  $('#setStun').value = settings.stun;
+  $('#setTurn').value = settings.turnUrl;
+  $('#setTurnUser').value = settings.turnUser;
+  $('#setTurnCred').value = settings.turnCred;
+  $('#setRelays').value = settings.relays;
+
+  const insecure = !window.isSecureContext || !crypto?.subtle;
+  if (insecure) {
+    const box = $('#insecure');
+    box.classList.remove('hidden');
+    box.textContent = `This page was loaded from ${location.protocol}//${location.host}, an insecure origin. Browsers block camera, microphone, screen capture and the cryptography this app needs there. Open it over https://, or over http://localhost on the same machine.`;
+    $('#btnCreate').disabled = true; $('#btnJoin').disabled = true;
+    return;
+  }
+
+  const refresh = () => {
+    const secret = parseInvite();
+    $('#btnCreate').classList.toggle('hidden', !!secret);
+    $('#btnJoin').classList.toggle('hidden', !secret);
+    $('#btnCopyLanding').classList.toggle('hidden', !secret);
+    $('#invitedNote').classList.toggle('hidden', !secret);
+    $('#landingInvite').textContent = secret ? inviteUrl(secret) : '';
+    if (location.hash && !secret) {
+      const f = $('#fatal');
+      f.classList.remove('hidden');
+      f.textContent = 'This invite link is damaged: it should end in #k= followed by 22 characters. Ask for a fresh link, or create a new room.';
+    }
+  };
+  refresh();
+  resolveInviteBase().then(refresh);
+
+  $('#btnCreate').onclick = () => {
+    const s = crypto.getRandomValues(new Uint8Array(16));
+    history.replaceState(null, '', location.pathname + location.search + '#k=' + b64u.enc(s));
+    refresh();
+  };
+  $('#btnCopyLanding').onclick = async () => {
+    const s = parseInvite();
+    if (s) { try { await navigator.clipboard.writeText(inviteUrl(s)); $('#btnCopyLanding').textContent = 'Copied'; } catch {} }
+  };
+  $('#btnSaveSettings').onclick = () => {
+    settings.lan = $('#setLan').checked;
+    settings.stun = $('#setStun').value.trim() || DEFAULT_STUN;
+    settings.turnUrl = $('#setTurn').value.trim();
+    settings.turnUser = $('#setTurnUser').value;
+    settings.turnCred = $('#setTurnCred').value;
+    settings.relays = $('#setRelays').value.trim();
+    saveSettings();
+    $('#settingsNote').textContent = 'Saved.';
+  };
+  $('#btnJoin').onclick = () => {
+    settings.name = nameIn.value.trim().slice(0, 24);
+    saveSettings();
+    if (localStorage.getItem(IP_NOTICE_KEY)) { startJoin(); return; }
+    showScreen({
+      title: 'Before you join',
+      body: [
+        'Others in the room can see your IP address. The introduction servers see it too.',
+        'This is the price of connecting peer-to-peer. If that is a problem, do not join, or use a VPN you trust.',
+      ],
+      actions: [{ label: 'Join anyway', cls: 'primary', fn: () => { localStorage.setItem(IP_NOTICE_KEY, '1'); startJoin(); } }, { label: 'Cancel' }],
+    });
+  };
+
+  if (sessionStorage.getItem(AUTOJOIN_KEY) && parseInvite()) {
+    sessionStorage.removeItem(AUTOJOIN_KEY);
+    startJoin();
+  }
+}
+
+function startJoin() {
+  joinFlow().catch((e) => {
+    $('#room').classList.add('hidden');
+    $('#landing').classList.remove('hidden');
+    const f = $('#fatal');
+    f.classList.remove('hidden');
+    f.textContent = `Could not start: ${e.message}`;
+  });
+}
+
+$('#btnMic').onclick = toggleMic;
+$('#btnCam').onclick = toggleCam;
+$('#btnShare').onclick = toggleShare;
+$('#btnLeave').onclick = () => leave('user');
+$('#btnMove').onclick = openMoveDialog;
+$('#btnInvite').onclick = copyInvite;
+$('#btnQr').onclick = () => showQr();
+$('#selRes').onchange = (e) => COMMANDS.res([e.target.value]);
+$('#consoleIn').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter') return;
+  const v = e.target.value.trim();
+  e.target.value = '';
+  if (v) runCommand(v.startsWith('/') ? v : '/' + v);
+});
+
+bootLanding();
+
+// Read-only handle for tests and DevTools.
+window.rtc = {
+  version: VERSION, protocol: PROTOCOL, S, chooseLevel, rt4Check, rosterRows, allTracksEnded,
+  run: runCommand, relayStatus, failures, allPCs,
+};
+</script>
+</body>
+</html>
