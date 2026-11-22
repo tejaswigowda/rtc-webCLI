@@ -454,7 +454,7 @@ function failureDetail(pc) {
   const hidden = remote.some(mdns) && local.some(mdns);
   const parts = [`you offered ${summarizeCandidates(local)}; they offered ${summarizeCandidates(remote)}`];
   if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
-  else if (hidden) parts.push('both browsers hid their local address behind a .local name. Two different browsers on one computer usually cannot resolve each other\'s. Use two windows of the same browser, two devices, or switch address hiding off for testing (Chrome: chrome://flags/#enable-webrtc-hide-local-ips-with-mdns; Firefox: media.peerconnection.ice.obfuscate_host_addresses = false; Safari: Develop > WebRTC > Disable ICE Candidate Restrictions)');
+  else if (hidden) parts.push('both browsers hid their local address behind a .local name, which browsers on one computer often cannot resolve. Fix: turn on Mic (or Camera) in both windows so each browser shows its real local address; the preview stays private until you press Send, and the connection retries by itself. Otherwise use two devices, or switch address hiding off for testing (Chrome: chrome://flags/#enable-webrtc-hide-local-ips-with-mdns; Firefox: media.peerconnection.ice.obfuscate_host_addresses = false; Safari: Develop > WebRTC > Disable ICE Candidate Restrictions)');
   else if (remoteOnlyLocal) parts.push('they offered only local-network addresses: either you are on different networks, or this network blocks devices from reaching each other (guest Wi-Fi, client isolation, VPN, firewall). A TURN server is the fix for different networks');
   return parts.join('. ');
 }
@@ -465,15 +465,21 @@ function classifyFailure(pc) {
   return 'ICE failed';
 }
 
+// A peer that never finished connecting has no name, only an id.
+const failureWho = (f) => (!f.peerId ? 'a peer' : S.peers.get(f.peerId)?.name ? displayName(f.peerId) : `a peer (${short(f.peerId)})`);
+
 function noteFailure(pc, peerId) {
   if (seenFailures.has(pc)) return;
   seenFailures.add(pc);
   const reason = classifyFailure(pc);
   const known = peerId || peerIdForPc(pc);
   const detail = failureDetail(pc);
-  failures.push({ pc, at: Date.now(), reason, detail, peerId: known || null });
+  // The library's own error for the same attempt may already be listed (it knows the id, not the cause).
+  const sibling = failures.find((f) => !f.pc && Date.now() - f.at < 30000);
+  if (sibling) Object.assign(sibling, { pc, reason, detail, peerId: sibling.peerId || known || null });
+  else failures.push({ pc, at: Date.now(), reason, detail, peerId: known || null });
   while (failures.length > 8) failures.shift();
-  log(`Couldn't reach ${known ? displayName(known) : 'a peer'} directly: ${reason}. ${detail}.`, 'err');
+  log(`Couldn't reach ${failureWho({ peerId: known })} directly: ${reason}. ${detail}.`, 'err');
   scheduleRender();
 }
 
@@ -670,9 +676,10 @@ function onRoomError(err) {
       actions: [{ label: 'Leave', cls: 'danger', fn: () => leave('full') }],
     });
   } else if (err.code === 'peer-connect-failed') {
-    const open = failures.find((f) => !f.peerId && Date.now() - f.at < 60000);
+    const open = failures.find((f) => !f.peerId && f.pc && Date.now() - f.at < 60000);
+    const dup = failures.find((f) => f.peerId === err.peerId && Date.now() - f.at < 30000);
     if (open) open.peerId = err.peerId;
-    else failures.push({ pc: null, at: Date.now(), reason: 'no connection after exchanging introductions', peerId: err.peerId });
+    else if (!dup) failures.push({ pc: null, at: Date.now(), reason: 'no connection after exchanging introductions', detail: '', peerId: err.peerId });
     scheduleRender();
   }
 }
@@ -1018,8 +1025,7 @@ function renderStatus() {
     msgs.push({ cls: 'warn', text: "Can't reach the introduction servers. People already connected stay connected; no one new can join." });
   }
   for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
-    const who = f.peerId ? displayName(f.peerId) : 'a peer';
-    msgs.push({ cls: 'bad', text: `Couldn't reach ${who} directly (${f.reason}).` });
+    msgs.push({ cls: 'bad', text: `Couldn't reach ${failureWho(f)} directly (${f.reason}).` });
   }
   const sig = JSON.stringify(msgs);
   if (box.dataset.sig === sig) return;
@@ -1075,7 +1081,7 @@ function renderRoster() {
 
   for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
     const row = el('div', { class: 'rrow fail' });
-    row.append(el('div', { class: 'nm', text: `Couldn't reach ${f.peerId ? displayName(f.peerId) + ' (' + short(f.peerId) + ')' : 'a peer'} directly` }));
+    row.append(el('div', { class: 'nm', text: `Couldn't reach ${failureWho(f)} directly` }));
     row.append(el('div', { class: 'meta', text: `${f.reason} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer${f.detail ? '. ' + f.detail + '.' : ''}` }));
     kids.push(row);
   }

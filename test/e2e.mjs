@@ -253,6 +253,24 @@ try {
   check('LAN address auto-detected from the browser when the server cannot tell us', !!autoInvite, autoInvite || '');
   plain.close();
 
+  // --- Hidden (.local) addresses: connects once both sides have an active preview ----------------
+  const hiddenBrowser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+  const hiddenUrl = ORIGIN + '/#k=' + 'H'.repeat(22);
+  const hp = [];
+  for (const n of ['Hal', 'Hel']) {
+    const ctx = await hiddenBrowser.newContext({ permissions: ['camera', 'microphone'] });
+    await ctx.addInitScript(({ relays, n }) => {
+      localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays }));
+      localStorage.setItem('rtc.ipNoticeSeen', '1');
+    }, { relays: relay.url, n });
+    const pg = await ctx.newPage();
+    await pg.goto(hiddenUrl); await join(pg);
+    await pg.click('#btnMic'); await pg.waitForSelector('#preview');
+    hp.push(pg);
+  }
+  check('with addresses hidden by default, an active preview in both lets them connect', (await connectedReady(hp[0], 1)) && (await connectedReady(hp[1], 1)));
+  await hiddenBrowser.close();
+
   // --- RT18: unreachable relays ------------------------------------------------------
   const F = await open('Frank', { url: ORIGIN + '/#k=' + 'R'.repeat(22), relays: 'ws://127.0.0.1:1' });
   await join(F);
