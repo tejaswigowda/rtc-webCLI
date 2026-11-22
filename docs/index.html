@@ -128,6 +128,8 @@
         <input id="setTurnUser" type="text" autocomplete="off" placeholder="TURN username" style="flex:1">
         <input id="setTurnCred" type="password" autocomplete="off" placeholder="TURN credential" style="flex:1">
       </div>
+      <label for="setInviteHost">Invite address, if the link shows 127.0.0.1 (your LAN address, e.g. 192.168.0.5:5500)</label>
+      <input id="setInviteHost" type="text" autocomplete="off" placeholder="blank = detect automatically">
       <label for="setRelays">Introduction relays (comma-separated wss:// URLs; blank = built-in list)</label>
       <input id="setRelays" type="text" autocomplete="off">
       <div class="row"><button id="btnSaveSettings">Save settings</button><span class="dim" id="settingsNote"></span></div>
@@ -268,15 +270,67 @@ function parseInvite() {
 // Invites must be reachable from other devices, so on a loopback origin the server's LAN address replaces the host.
 let inviteBase = location.href.split('#')[0];
 const isLoopbackHost = (h) => ['localhost', '127.0.0.1', '[::1]'].includes(h);
+// Directory the app is served from, tolerant of "/docs" (no slash) and "/docs/index.html".
+const APP_DIR = (() => {
+  const p = location.pathname;
+  if (p.endsWith('/')) return p;
+  const last = p.split('/').pop();
+  return last.includes('.') ? p.slice(0, p.length - last.length) : p + '/';
+})();
+const defaultInviteBase = location.origin !== 'null' ? location.origin + APP_DIR : location.href.split('#')[0];
 let inviteBaseReady = null;
-function resolveInviteBase() {
+
+// "192.168.0.5:5500" or "https://192.168.0.5:8443" -> an origin, or null if unusable.
+function parseInviteHost(raw) {
+  const v = String(raw || '').trim().replace(/\/+$/, '');
+  if (!v) return null;
+  const withScheme = /^https?:\/\//i.test(v) ? v : `${location.protocol}//${v}`;
+  try {
+    const u = new URL(withScheme);
+    return u.host && !isLoopbackHost(u.hostname) ? `${u.protocol}//${u.host}` : null;
+  } catch { return null; }
+}
+
+// Best effort: a host ICE candidate reveals the local IPv4 on browsers that do not mask it with mDNS.
+// No STUN is configured, so this sends nothing.
+function probeLocalIPv4() {
+  if (typeof RTCPeerConnection === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const pc = new RTCPeerConnection({ iceServers: [] });
+    const found = [];
+    const finish = () => {
+      clearTimeout(timer);
+      pc.close();
+      const rank = (a) => (/^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))/.test(a) ? 0 : 1);
+      resolve(found.sort((x, y) => rank(x) - rank(y))[0] || null);
+    };
+    const timer = setTimeout(finish, 1500);
+    pc.createDataChannel('probe');
+    pc.onicecandidate = (e) => {
+      if (!e.candidate) { finish(); return; }
+      const addr = e.candidate.candidate.split(' ')[4];
+      if (/^\d{1,3}(\.\d{1,3}){3}$/.test(addr) && !addr.startsWith('127.') && !addr.startsWith('169.254.')) found.push(addr);
+    };
+    pc.createOffer().then((o) => pc.setLocalDescription(o)).catch(finish);
+  });
+}
+
+// Invites must be reachable from other devices. Order: the address you entered, the server's /lan.json,
+// the browser's own view of the LAN address. Only on a loopback origin; otherwise the current origin is right.
+function resolveInviteBase(force = false) {
+  if (force) inviteBaseReady = null;
   inviteBaseReady ??= (async () => {
+    inviteBase = defaultInviteBase;
+    const manual = parseInviteHost(settings.inviteHost);
+    if (manual) { inviteBase = manual + APP_DIR; return; }
     if (!isLoopbackHost(location.hostname)) return;
     try {
-      const res = await fetch('lan.json', { cache: 'no-store' });
+      const res = await fetch(new URL('lan.json', location.origin + APP_DIR), { cache: 'no-store' });
       const { addresses, port, protocol } = await res.json();
-      if (addresses?.length) inviteBase = `${protocol}//${addresses[0]}${port ? ':' + port : ''}${location.pathname}`;
-    } catch { /* not served by server.js; keep the current origin */ }
+      if (addresses?.length) { inviteBase = `${protocol}//${addresses[0]}${port ? ':' + port : ''}${APP_DIR}`; return; }
+    } catch { /* not served by server.js (for example Live Server) */ }
+    const ip = await probeLocalIPv4();
+    if (ip) inviteBase = `${location.protocol}//${ip}${location.port ? ':' + location.port : ''}${APP_DIR}`;
   })();
   return inviteBaseReady;
 }
@@ -289,7 +343,7 @@ const inviteUrl = (secret) => inviteBase + '#k=' + b64u.enc(secret);
 const settings = (() => {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
-  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', ...s };
+  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', ...s };
 })();
 const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 function customRelays() {
@@ -305,7 +359,7 @@ async function loadVerified(file) {
   if (libCache[file]) return libCache[file];
   const pin = PINS[file];
   if (!pin) throw new Error(`No pinned hash for ${file}. Run "npm run vendor".`);
-  const res = await fetch('lib/' + file, { cache: 'no-store' });
+  const res = await fetch(new URL('lib/' + file, location.origin + APP_DIR), { cache: 'no-store' });
   if (!res.ok) throw new Error(`Could not load lib/${file} (${res.status}).`);
   const buf = new Uint8Array(await res.arrayBuffer());
   const got = hex(await sha256(buf));
@@ -356,10 +410,10 @@ class TrackedPC extends RTCPeerConnection {
     super(cfg);
     this._born = Date.now();
     this._remoteAt = null;
-    this._localCands = 0;
-    this._extraRemoteCands = 0;
+    this._localList = [];
+    this._remoteList = [];
     allPCs.add(this);
-    this.addEventListener('icecandidate', (e) => { if (e.candidate && e.candidate.candidate) this._localCands++; });
+    this.addEventListener('icecandidate', (e) => { if (e.candidate && e.candidate.candidate) this._localList.push(e.candidate.candidate); });
     this.addEventListener('connectionstatechange', () => {
       if (this.connectionState === 'closed') allPCs.delete(this);
       if (this.connectionState === 'failed') noteFailure(this);
@@ -371,17 +425,42 @@ class TrackedPC extends RTCPeerConnection {
     return super.setRemoteDescription(desc, ...rest);
   }
   addIceCandidate(c, ...rest) {
-    if (c && c.candidate) this._extraRemoteCands++;
+    if (c && c.candidate) this._remoteList.push(c.candidate);
     return super.addIceCandidate(c, ...rest);
   }
-  remoteCandidateCount() {
+  remoteCandidates() {
     const sdp = this.remoteDescription?.sdp || '';
-    return (sdp.match(/^a=candidate:/gm) || []).length + this._extraRemoteCands;
+    return [...(sdp.match(/^a=candidate:.*$/gm) || []).map((l) => l.slice(2)), ...this._remoteList];
   }
+  remoteCandidateCount() { return this.remoteCandidates().length; }
+}
+
+// "host×1 (mDNS), srflx×1" from raw candidate lines.
+function summarizeCandidates(lines) {
+  const counts = new Map();
+  for (const line of new Set(lines)) {
+    const f = line.split(' ');
+    const type = /\btyp (\w+)/.exec(line)?.[1] || '?';
+    const key = type + (f[4]?.endsWith('.local') ? ' (mDNS)' : '');
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return counts.size ? [...counts].map(([k, n]) => `${k}×${n}`).join(', ') : 'none';
+}
+
+function failureDetail(pc) {
+  const local = pc._localList, remote = pc.remoteCandidates();
+  const remoteOnlyLocal = remote.length > 0 && remote.every((l) => / typ host/.test(l));
+  const mdns = (l) => / typ host/.test(l) && l.split(' ')[4]?.endsWith('.local');
+  const hidden = remote.some(mdns) && local.some(mdns);
+  const parts = [`you offered ${summarizeCandidates(local)}; they offered ${summarizeCandidates(remote)}`];
+  if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
+  else if (hidden) parts.push('both browsers hid their local address behind a .local name. Two different browsers on one computer usually cannot resolve each other\'s. Use two windows of the same browser, two devices, or switch address hiding off for testing (Chrome: chrome://flags/#enable-webrtc-hide-local-ips-with-mdns; Firefox: media.peerconnection.ice.obfuscate_host_addresses = false; Safari: Develop > WebRTC > Disable ICE Candidate Restrictions)');
+  else if (remoteOnlyLocal) parts.push('they offered only local-network addresses: either you are on different networks, or this network blocks devices from reaching each other (guest Wi-Fi, client isolation, VPN, firewall). A TURN server is the fix for different networks');
+  return parts.join('. ');
 }
 
 function classifyFailure(pc) {
-  if (pc._localCands === 0 || pc.remoteCandidateCount() === 0) return 'no candidates';
+  if (pc._localList.length === 0 || pc.remoteCandidateCount() === 0) return 'no candidates';
   if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') return 'DTLS failed';
   return 'ICE failed';
 }
@@ -391,9 +470,10 @@ function noteFailure(pc, peerId) {
   seenFailures.add(pc);
   const reason = classifyFailure(pc);
   const known = peerId || peerIdForPc(pc);
-  failures.push({ pc, at: Date.now(), reason, peerId: known || null });
+  const detail = failureDetail(pc);
+  failures.push({ pc, at: Date.now(), reason, detail, peerId: known || null });
   while (failures.length > 8) failures.shift();
-  log(`Couldn't reach ${known ? displayName(known) : 'a peer'} directly: ${reason}.`, 'err');
+  log(`Couldn't reach ${known ? displayName(known) : 'a peer'} directly: ${reason}. ${detail}.`, 'err');
   scheduleRender();
 }
 
@@ -996,7 +1076,7 @@ function renderRoster() {
   for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
     const row = el('div', { class: 'rrow fail' });
     row.append(el('div', { class: 'nm', text: `Couldn't reach ${f.peerId ? displayName(f.peerId) + ' (' + short(f.peerId) + ')' : 'a peer'} directly` }));
-    row.append(el('div', { class: 'meta', text: `${f.reason} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer` }));
+    row.append(el('div', { class: 'meta', text: `${f.reason} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer${f.detail ? '. ' + f.detail + '.' : ''}` }));
     kids.push(row);
   }
   box.replaceChildren(...kids);
@@ -1304,6 +1384,22 @@ async function copyInvite() {
   catch { log(`Copy failed. Invite link: ${url}`, 'err'); }
 }
 
+function lanFixer() {
+  const input = el('input', { type: 'text', placeholder: '192.168.0.5:5500', autocomplete: 'off' });
+  input.value = settings.inviteHost || (location.port ? ':' + location.port : '');
+  const apply = async () => {
+    const host = input.value.trim();
+    if (!parseInviteHost(host)) { input.style.borderColor = 'var(--bad)'; return; }
+    settings.inviteHost = host;
+    saveSettings();
+    await resolveInviteBase(true);
+    showQr();
+  };
+  return el('div', { class: 'banner warn' },
+    el('p', { text: 'No LAN address could be detected, so this link only works on this device. Enter this computer\'s LAN address and port:' }),
+    input, el('div', { style: 'margin-top:8px' }, el('button', { class: 'primary', text: 'Use this address', onclick: apply })));
+}
+
 async function showQr() {
   const qrcode = (await loadVerified('qrcode.js')).default;
   await resolveInviteBase();
@@ -1319,7 +1415,7 @@ async function showQr() {
   ctx.fillStyle = '#000';
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect((c + quiet) * scale, (r + quiet) * scale, scale, scale);
   const node = el('div', {}, canvas, el('p', { class: 'dim mono', text: url, style: 'word-break:break-all' }), el('p', { class: 'dim', text: 'Anyone who scans this can join. It encodes exactly the same link as "Copy invite".' }),
-    inviteIsLoopback() ? el('p', { class: 'banner warn', text: 'No LAN address was found, so this link only works on this device. Restart the server with npm start and reopen the page.' }) : null);
+    inviteIsLoopback() ? lanFixer() : null);
   showScreen({ title: 'Invite QR', node, actions: [{ label: 'Close' }] });
 }
 
@@ -1349,6 +1445,7 @@ const COMMANDS = {
       '/remove <peer>    ask everyone to disconnect a peer (a request, not enforcement)',
       '/move [all|peer…] move to a new room with the chosen people',
       '/invite | /qr     copy the invite link / show its QR code',
+      '/invitehost <host:port>|auto   set the LAN address used in invite links',
       '/lan on|off       LAN only (no STUN) — applies on next join',
       '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
       '/relays           introduction servers and their state',
@@ -1408,6 +1505,15 @@ const COMMANDS = {
   },
   invite() { return copyInvite(); },
   qr() { return showQr(); },
+  async invitehost(args) {
+    if (!args.length) { log(`Invite links use ${inviteBase}`); return; }
+    if (args[0] === 'auto') settings.inviteHost = '';
+    else if (parseInviteHost(args[0])) settings.inviteHost = args[0];
+    else { log('Usage: /invitehost <LAN host:port> | auto   (not a loopback address)', 'err'); return; }
+    saveSettings();
+    await resolveInviteBase(true);
+    log(`Invite links now use ${inviteBase}`);
+  },
   lan(args) {
     if (!['on', 'off'].includes(args[0])) { log(`LAN only is ${settings.lan ? 'on' : 'off'}. Usage: /lan on|off (applies on next join)`); return; }
     settings.lan = args[0] === 'on'; saveSettings();
@@ -1461,6 +1567,7 @@ function bootLanding() {
   $('#setTurnUser').value = settings.turnUser;
   $('#setTurnCred').value = settings.turnCred;
   $('#setRelays').value = settings.relays;
+  $('#setInviteHost').value = settings.inviteHost;
 
   const insecure = !window.isSecureContext || !crypto?.subtle;
   if (insecure) {
@@ -1503,8 +1610,10 @@ function bootLanding() {
     settings.turnUser = $('#setTurnUser').value;
     settings.turnCred = $('#setTurnCred').value;
     settings.relays = $('#setRelays').value.trim();
+    settings.inviteHost = $('#setInviteHost').value.trim();
     saveSettings();
-    $('#settingsNote').textContent = 'Saved.';
+    resolveInviteBase(true).then(refresh);
+    $('#settingsNote').textContent = settings.inviteHost && !parseInviteHost(settings.inviteHost) ? 'Saved, but the invite address is not usable (use a non-loopback host).' : 'Saved.';
   };
   $('#btnJoin').onclick = () => {
     settings.name = nameIn.value.trim().slice(0, 24);

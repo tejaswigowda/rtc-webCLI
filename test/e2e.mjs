@@ -3,6 +3,10 @@
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { startMockRelay } from './mock-relay.mjs';
+import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PORT = 18080 + Math.floor(Math.random() * 500);
 const ORIGIN = `http://localhost:${PORT}`;
@@ -206,6 +210,48 @@ try {
   const failed13 = await until(async () => /Couldn't reach .* directly \((no candidates|ICE failed|DTLS failed)\)/.test(await H.textContent('#status')), 40000);
   check('RT13 unreachable pair is named with a reason class', failed13, `${Math.round((Date.now() - t0) / 1000)}s: ${(await H.textContent('#status')).slice(0, 120)}`);
   await blocked.close();
+
+  // --- Plain static host (like VS Code Live Server): no /lan.json, page opened at /docs ---------
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const plain = http.createServer(async (req, res) => {
+    let p = new URL(req.url, 'http://x').pathname;
+    if (p === '/docs' || p === '/docs/') p = '/docs/index.html';
+    try {
+      const body = await readFile(path.join(repoRoot, p));
+      res.writeHead(200, { 'Content-Type': p.endsWith('.js') ? 'text/javascript' : p.endsWith('.json') ? 'application/json' : 'text/html' }).end(body);
+    } catch { res.writeHead(404).end('nope'); }
+  });
+  await new Promise((r) => plain.listen(0, '127.0.0.1', r));
+  const plainUrl = `http://127.0.0.1:${plain.address().port}/docs`;
+
+  // The default Chromium masks local IPs with mDNS, so detection fails and the QR dialog asks for the address.
+  const masked = await chromium.launch();
+  const mctx = await masked.newContext();
+  await mctx.addInitScript(() => localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Liv', lan: true, relays: 'ws://127.0.0.1:1' })));
+  await mctx.addInitScript(() => localStorage.setItem('rtc.ipNoticeSeen', '1'));
+  const L = await mctx.newPage();
+  await L.goto(plainUrl);
+  await L.click('#btnCreate');
+  await until(async () => /#k=/.test(await L.textContent('#landingInvite')), 10000);
+  await L.click('#btnJoin');
+  await L.waitForSelector('#room:not(.hidden)');
+  check('page works at /docs with no trailing slash (vendored libs load)', true);
+  await L.click('#btnQr');
+  const fixer = await until(async () => (await L.$('#overlayCard input')) !== null, 10000);
+  check('QR dialog asks for the LAN address when it cannot be detected', fixer);
+  if (fixer) {
+    await L.fill('#overlayCard input', '192.168.7.7:5500');
+    await L.click('#overlayCard button:has-text("Use this address")');
+    const shown = await until(async () => /http:\/\/192\.168\.7\.7:5500\/docs\/#k=/.test(await L.textContent('#overlayCard')), 10000);
+    check('QR then encodes the entered LAN address', shown, (await L.textContent('#overlayCard')).match(/http\S+/)?.[0]);
+  }
+  await masked.close();
+  // With local IPs visible (as in Firefox/Safari or with permission), detection fills it in on its own.
+  const P = await open('Pat', { url: plainUrl, relays: 'ws://127.0.0.1:1' });
+  await P.click('#btnCreate');
+  const autoInvite = await until(async () => { const t = await P.textContent('#landingInvite'); return /#k=/.test(t) && !/\/\/(localhost|127\.0\.0\.1)/.test(t) && t; }, 10000);
+  check('LAN address auto-detected from the browser when the server cannot tell us', !!autoInvite, autoInvite || '');
+  plain.close();
 
   // --- RT18: unreachable relays ------------------------------------------------------
   const F = await open('Frank', { url: ORIGIN + '/#k=' + 'R'.repeat(22), relays: 'ws://127.0.0.1:1' });

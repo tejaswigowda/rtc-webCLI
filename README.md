@@ -180,12 +180,22 @@ npm start          # http://localhost:8080/
 
 The server listens on all interfaces and prints your network address. When the page is opened on `localhost`, **Copy invite** and **QR** use that LAN address (from `/lan.json`) instead of `127.0.0.1`, so other devices can open them.
 
+**Other static servers (VS Code Live Server, `python -m http.server`, ...)** work too, including when you open `http://127.0.0.1:5500/docs`. They cannot report your LAN address, so the page tries to detect it from the browser. Many browsers hide it, in which case the **QR** dialog asks for it (for example `192.168.0.5:5500`). You can also set it under **Network settings** or with `/invitehost <host:port>`.
+
 Camera, microphone, screen capture and the cryptography need `https://` or `http://localhost`. Over plain `http://<LAN IP>` the page explains this instead of failing with a permission error. For a working LAN session serve https:
 
 ```bash
 openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=rtc-webCLI" -keyout key.pem -out cert.pem
 TLS_KEY=key.pem TLS_CERT=cert.pem npm start     # each device accepts the self-signed certificate once
 ```
+
+### Troubleshooting: "Couldn't reach X directly"
+
+The message lists the kinds of addresses each side offered. The usual causes:
+
+- **Two different browsers on one computer** (for example Chrome and Firefox). Browsers hide their local address behind a random `.local` name, and one browser usually cannot resolve another's. Use two windows of the same browser, two devices, or turn address hiding off for testing: Chrome `chrome://flags/#enable-webrtc-hide-local-ips-with-mdns` set to Disabled, Firefox `media.peerconnection.ice.obfuscate_host_addresses` set to `false`, Safari Develop → WebRTC → Disable ICE Candidate Restrictions. (Confirmed with Chromium and Firefox on one machine: they fail by default and connect with hiding off.)
+- **Different networks, or a network that blocks devices from reaching each other** (guest Wi-Fi, client isolation, VPN). Add your own TURN server in Network settings.
+- **LAN only is on.** That turns STUN off, so only people on the same network can connect.
 
 ### Deployment
 
