@@ -12,7 +12,7 @@ A browser-based room for audio, video and screen share, opened with an invite li
 
 **Read more, with diagrams: [the About page](docs/about/index.html)** (served at `/about/`).
 
-**Status: v0.3.0 (protocol 3): not yet run on real devices. On v0.2.0 (2026-11-21): two runs pass, one fails** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
+**Status: v0.3.0 (protocol 3): not yet run on real devices. On v0.2.0 (2026-11-21): two runs pass, one fails. Same Wi-Fi, on one home network: iPhone (Safari) ↔ Mac (Chrome) connected (2026-11-22, build not recorded); Android (Chrome) ↔ Mac did not, and is under investigation** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
 ---
 
@@ -267,6 +267,8 @@ Camera, microphone, screen capture and the cryptography need `https://` or `http
 - Tested with two default-settings Chromium windows on one machine, in both setups, and Chromium with Firefox on one machine served by `server.js` (they connect, which they did not before), including connecting after the microphone was allowed **without a reload**. **Not yet re-tested on a phone and laptop**; the manual rows are in the RT22 table.
 - You can turn sharing off under Network settings or with `/shareaddr off`; people in the room then see only your public address.
 
+**Every failure now names one cause (or says it does not know).** The roster entry shows a code and plain-language text: `MY_MDNS` (your browser hides your address: press **Allow local connections**, which also shows as a banner), `THEIR_MDNS` (theirs does: if the two of you are connected some other way, they are asked to allow it; otherwise tell them), `NO_REMOTE_HOST` (their device offered no local address at all), `BOTH_PRIVATE_BLOCKED` (both offered local addresses and nothing got through: this network may keep devices apart, or a firewall is blocking incoming connections), `DIFFERENT_NETWORKS`, `LAN_ONLY`, `NO_CANDIDATES`, `NO_ANSWER` (someone announced themselves but their answer never arrived: introduction relays, not addresses) and `UNKNOWN`, which never guesses. **Copy diagnostic** (or `/diag`) copies what the attempt looked like, with candidates reduced to type, protocol and address class and **no IP addresses**, to attach to a report. A pair that is not connected cannot be sent a message, so asking the other side to allow local connections only works when you are already connected some other way.
+
 If it still fails, the router is probably blocking devices from reaching each other (client or AP isolation, common on guest Wi-Fi): turn that off, or add your own TURN server. The console line with both sides' address kinds is the useful report.
 
 The roster entry (and console line) lists the kinds of addresses each side offered. The usual causes:
@@ -349,9 +351,14 @@ Chrome, Firefox, Safari on macOS, iOS Safari and Android Chrome, every pair, aud
 | 2026-11-21 | Chrome (macOS) ↔ Chrome Incognito (same machine) | one machine | signaling, data channel, chat; **no media** | pass | direct (local network) |
 | 2026-11-21 | Android Chrome ↔ Chrome (macOS), 3 people | phone on **cellular**, laptop on home Wi-Fi | video both ways, audio (muted) | pass | direct, via STUN |
 | 2026-11-21 | Android Chrome ↔ Chrome (macOS) | **both on the same home Wi-Fi** | joining | **fail**: did not connect. Message shown on the phone: **not recorded**. Cause: **not diagnosed** (hidden `.local` addresses, or the router not looping traffic back, or client isolation) | none |
+| 2026-11-22 | **iOS Safari ↔ Chrome (macOS)** (T6a) | **same home Wi-Fi** | joining | **pass**. Not recorded: build, iPhone model and iOS version, path shown (local network or via STUN), whether Mic, Camera or Allow local connections was pressed first, media exercised | not recorded |
+| pending | **T1** Android ↔ Mac, same home Wi-Fi, neither presses anything (current build) | same Wi-Fi | joining; copy the diagnostic from the phone | not yet run | |
+| pending | **T2** as T1, then **both** press Allow local connections | same Wi-Fi | does address sharing fix it on Android? Key field: does the phone now offer a `private` host candidate? | not yet run | |
+| pending | **T7** as T2, with `chrome://flags/#enable-webrtc-hide-local-ips-with-mdns` Disabled in Android Chrome and the Mac | same Wi-Fi | takes the `.local` machinery out: no `private` host from the phone means Android is not offering local addresses (cause B) | not yet run | |
+| pending | **T6b** a **second Android device** ↔ Mac, T2 setup | same Wi-Fi | one phone, or Android in general | not yet run | |
+| pending | **T6c** Android ↔ iPhone, T2 setup | same Wi-Fi | does the failure follow the phone or the Android↔Mac pairing | not yet run | |
 
-| pending | Android Chrome ↔ Chrome (macOS), **same home Wi-Fi, live site, v0.3.0, without Mic** | same Wi-Fi | joining | not yet run | |
-| pending | the same pair, **after turning on Mic on both** | same Wi-Fi | joining, then media | not yet run | |
+**What the T6a pass rules out, for this network and this Mac:** router isolation and the Mac's firewall. The leading hypothesis for the Android failure is now Android-specific: that phone not offering a reachable local address, or address sharing not taking effect on it. That is **one phone**; nothing here says "Android" until T6b. Diagnostics from every run go in [`test/field/`](test/field/) (see its README); each is the JSON from **Copy diagnostic** (or `/diag`) and contains no IP addresses.
 
 Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them. Any failing pair is listed here.
 
@@ -426,6 +433,7 @@ Each of these is logged, with a trigger for building it:
 - **Host controls, lock, waiting room.** Not enforceable without a server, so not faked. (Recording by the creator is offered because it only affects the creator's own copy.)
 - **Cloud recording, chat history, file sharing in chat.** Nothing is stored anywhere but the creator's own recording file. History for late joiners and file sharing were considered and left out: history would mean someone's browser keeps and hands over messages, and a file from a stranger holding the link is an attack surface.
 - **Live captions.** Possible by reusing whisper-webCLI in the browser, but it is a large download and not built.
+- **TURN for networks that keep devices apart (decision pending).** Options: (a) bring your own TURN, which exists; (b) an opt-in, declared TURN provider with short-lived credentials from a minimal credential endpoint, which is a server and would be stated as one; (c) say that networks which keep devices apart are not supported and use cellular. Reopen with evidence when a guest, campus or venue network fails with both sides offering private addresses (`BOTH_PRIVATE_BLOCKED`). Not built.
 - **Zero-relay calls by manual QR exchange** (exactly two people).
 - **Background blur and noise suppression** beyond what the browser provides.
 - **A `run=` agent surface** (`window.__webcli_result`).

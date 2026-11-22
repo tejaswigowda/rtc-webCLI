@@ -382,6 +382,7 @@ try {
   await until(async () => /\.local/.test(await sPages[0].textContent('#roster')), 45000);
   const stuck = await sPages[0].evaluate(() => window.rtc.S.peers.size === 0 && window.rtc.getLanIp() === null);
   const stuckText = await sPages[0].textContent('#roster');
+  check('SW5 the failure also raises a banner with the Allow local connections button', /Allow local connections/.test(await sPages[0].textContent('#status')));
   check('RV1 static host, addresses hidden, no media: the pair does not connect and the roster names the hidden .local addresses', stuck && /\.local/.test(stuckText) && /Allow local connections/.test(stuckText), stuckText.slice(-200));
   // The user allows the microphone (the browser remembers the permission, which is what unmasks the address).
   // One side uses the Mic button, the other the one-click helper (which releases the device at once).
@@ -399,6 +400,8 @@ try {
   await sPages[1].click('#btnCam'); await sPages[1].waitForSelector('#preview'); await sPages[1].click('#preview button.primary');
   check('media turned on after the address was shared reaches the other side without a refresh',
     await until(() => sPages[0].evaluate(() => [...window.rtc.S.peers.values()].some((p) => p.streams.cam)), 60000));
+  check('SW5/SW7 once the address is shared the banner and the stale MY_MDNS failure are gone', await until(async () => !/Allow local connections/.test(await sPages[0].textContent('#status')) && !(await sPages[0].textContent('#roster')).includes('[MY_MDNS]'), 20000));
+  check('SW9 the path says it is a local network connection using the shared address', await until(() => sPages[0].evaluate(() => [...window.rtc.S.peers.values()].some((p) => /shared address/.test(p.stats?.path || ''))), 20000));
   check('RV5 a static host never sees /whoami or /lan.json requests', sReqs.every((u) => !/\/(whoami|lan\.json)/.test(u)), sReqs.filter((u) => /whoami|lan\.json/.test(u)).join(', '));
   await maskedStatic.close(); staticSrv.close();
 
@@ -491,6 +494,26 @@ try {
   check('a stuck renegotiation is detected and the camera still arrives (asks again, then reconnects)',
     await until(() => wB.evaluate(() => [...window.rtc.S.peers.values()].some((p) => p.streams.cam)), 120000));
   await wA.close(); await wB.close();
+
+  // --- SW4: every failure gets one named cause, or "unknown" ---------------------------------------------------------------
+  const dg = await A.evaluate(() => {
+    const c = (type, addrClass, protocol = 'udp') => ({ type, protocol, addrClass });
+    const d = window.rtc.diagnose;
+    return {
+      none: d([], [c('host', 'private')], {}).code,
+      mine: d([c('host', 'mdns'), c('srflx', 'public')], [c('host', 'private')], { lanKnown: false }).code,
+      bothBlocked: d([c('host', 'mdns')], [c('host', 'private')], { lanKnown: true }).code,
+      noRemoteHost: d([c('host', 'private')], [c('srflx', 'public')], { lanKnown: true }).code,
+      theirs: d([c('host', 'private')], [c('host', 'mdns')], { lanKnown: true }).code,
+      lanOnly: d([c('host', 'private')], [c('host', 'public')], { lanKnown: true, lan: true }).code,
+      different: d([c('srflx', 'public')], [c('host', 'private')], {}).code,
+      unknown: d([c('host', 'public')], [c('host', 'public')], {}).code,
+      cls: ['a=candidate:1 1 udp 2122260223 abcd.local 5000 typ host', 'candidate:2 1 UDP 2122 192.168.0.9 5000 typ host', 'candidate:3 1 udp 1 203.0.113.9 5000 typ srflx', 'candidate:4 1 udp 1 203.0.113.9 5000 typ relay'].map((l) => window.rtc.candClass(l).addrClass).join(','),
+    };
+  });
+  check('SW4 each cause maps to its code (MY_MDNS, BOTH_PRIVATE_BLOCKED, NO_REMOTE_HOST, THEIR_MDNS, LAN_ONLY, DIFFERENT_NETWORKS, NO_CANDIDATES, UNKNOWN)',
+    dg.mine === 'MY_MDNS' && dg.bothBlocked === 'BOTH_PRIVATE_BLOCKED' && dg.noRemoteHost === 'NO_REMOTE_HOST' && dg.theirs === 'THEIR_MDNS' && dg.lanOnly === 'LAN_ONLY' && dg.different === 'DIFFERENT_NETWORKS' && dg.none === 'NO_CANDIDATES' && dg.unknown === 'UNKNOWN', JSON.stringify(dg));
+  check('SW4 candidate classes: mdns, private, public, relay', dg.cls === 'mdns,private,public,relay', dg.cls);
 
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
@@ -610,6 +633,14 @@ try {
   const t0 = Date.now();
   const failed13 = await until(async () => /Couldn't reach .* directly.*(no candidates|ICE failed|DTLS failed)/.test(await H.textContent('#roster')), 40000);
   check('RT13 unreachable pair is named with a reason class', failed13, `${Math.round((Date.now() - t0) / 1000)}s: ${(await H.textContent('#roster')).slice(-160)}`);
+  // SW1: Copy diagnostic, with no IP address in it
+  await H.click('#roster button:has-text("Copy diagnostic")');
+  const diag = await until(() => H.evaluate(() => window.rtc.getLastDiagnostic()), 10000);
+  const diagText = JSON.stringify(diag || {});
+  const codes = ['MY_MDNS', 'THEIR_MDNS', 'NO_REMOTE_HOST', 'BOTH_PRIVATE_BLOCKED', 'DIFFERENT_NETWORKS', 'LAN_ONLY', 'NO_CANDIDATES', 'NO_ANSWER', 'UNKNOWN'];
+  check('SW1 Copy diagnostic on a failed pair: parses, has the fields, and contains no IPv4 or IPv6 literal',
+    !!diag && codes.includes(diag.failure.code) && !!diag.browser.brand && !!diag.os && Array.isArray(diag.candidates.local) && Array.isArray(diag.iceTransitions)
+    && !/\b\d{1,3}(\.\d{1,3}){3}\b/.test(diagText) && !/\b[0-9a-f]{1,4}(:[0-9a-f]{0,4}){3,}\b/i.test(diagText), diag ? `${diag.failure.code} ${diag.failure.reason}` : 'none');
   await blocked.close();
 
   // --- Plain static host (like VS Code Live Server): no /lan.json, page opened at /docs ---------

@@ -682,13 +682,14 @@ const seenFailures = new WeakSet();
 // back in the candidates we send, so same-network connections work without mDNS. Public addresses and
 // everything else are untouched. Anyone in the room already sees your public address; this adds the private one.
 let lanIp = null;
+let lanSource = null; // 'manual' | 'server' | 'probe'
 const MDNS_HOST = /( \d+ (?:udp|tcp) \d+ )(\S+\.local)( \d+ typ host)/gi;
 const unhideSdp = (text) => (lanIp ? String(text).replace(MDNS_HOST, `$1${lanIp}$3`) : text);
 // Where our own local address can come from: one you typed (on this machine), the server's /whoami (only
 // when it can be sure), or the browser itself (only once it has been allowed camera or microphone access).
 async function findOwnLan() {
   const manual = isLoopbackHost(location.hostname) ? (settings.inviteHost || '').replace(/^https?:\/\//, '').split(':')[0] : '';
-  if (usablePrivate(manual)) return manual;
+  if (usablePrivate(manual)) { lanSource = 'manual'; return manual; }
   if (SERVED_BY_SERVER) {
     try {
       const ctl = new AbortController();
@@ -696,11 +697,12 @@ async function findOwnLan() {
       const res = await fetch(new URL('whoami', location.origin + APP_DIR), { cache: 'no-store', signal: ctl.signal });
       clearTimeout(t);
       const { ip } = await res.json();
-      if (usablePrivate(ip || '')) return ip;
+      if (usablePrivate(ip || '')) { lanSource = 'server'; return ip; }
     } catch { /* server did not answer */ }
   }
   const probed = await probeLocalIPv4();
-  return probed && usablePrivate(probed) ? probed : null;
+  if (probed && usablePrivate(probed)) { lanSource = 'probe'; return probed; }
+  return null;
 }
 
 async function resolveOwnLan(force = false) {
@@ -741,10 +743,93 @@ async function refreshOwnLan() {
   const ip = await findOwnLan();
   if (!ip || ip === before) return;
   lanIp = ip;
+  S.lanLost = false;
+  // Anything diagnosed as "your address is hidden" is stale now. New attempts are fresh and get diagnosed afresh.
+  for (let i = failures.length - 1; i >= 0; i--) if (failures[i].code === 'MY_MDNS') failures.splice(i, 1);
   log(`Now sharing your local network address (${ip}), so devices on the same network can connect.`);
   // No restartIce() here: renegotiating a live connection while the user is about to add a camera makes the library
   // drop the offer that carries the new tracks, and the other side never receives them. New connection attempts pick
   // the address up by themselves, because they are created after lanIp is set.
+}
+
+// ---------------------------------------------------------------------------
+// Copy diagnostic: what a failed attempt looked like, with no IP address in it (candidates are reduced to
+// type, protocol and address class), so it is safe to paste into an issue.
+// ---------------------------------------------------------------------------
+const lanClass = () => (!lanIp ? 'none' : /^192\.168\./.test(lanIp) ? '192.168' : /^10\./.test(lanIp) ? '10' : '172.16-31');
+function browserInfo() {
+  const ua = navigator.userAgent || '';
+  const brands = (navigator.userAgentData?.brands || []).filter((b) => !/not.?a.?brand/i.test(b.brand));
+  const pick = brands.find((b) => /Chrom|Edge|Opera|Brave/i.test(b.brand)) || brands[0];
+  let brand = pick?.brand, major = pick?.version;
+  if (!brand) {
+    const m = /(Firefox|Edg|Chrome|Version)\/(\d+)/.exec(ua);
+    brand = m ? (m[1] === 'Version' ? 'Safari' : m[1] === 'Edg' ? 'Edge' : m[1]) : 'unknown';
+    major = m?.[2] || '?';
+  }
+  const os = /Android/i.test(ua) ? 'Android' : /iPhone|iPad|iPod/i.test(ua) ? 'iOS' : /Mac/i.test(ua) ? 'macOS' : /Win/i.test(ua) ? 'Windows' : /Linux/i.test(ua) ? 'Linux' : 'other';
+  return { brand, major: String(major).split('.')[0], os };
+}
+
+async function buildDiagnostic(f) {
+  const b = browserInfo();
+  let mic = 'unsupported';
+  try { mic = (await navigator.permissions.query({ name: 'microphone' })).state; } catch {}
+  const pairs = { failed: 0, succeeded: 0, 'in-progress': 0, waiting: 0, frozen: 0 };
+  let selected = null;
+  const pc = f.pc;
+  if (pc && !pcClosed(pc)) {
+    try {
+      const rep = await pc.getStats();
+      const by = new Map();
+      rep.forEach((r) => by.set(r.id, r));
+      rep.forEach((r) => {
+        if (r.type === 'candidate-pair') pairs[r.state] = (pairs[r.state] || 0) + 1;
+        if (r.type === 'transport' && r.selectedCandidatePairId) {
+          const pr = by.get(r.selectedCandidatePairId);
+          const lc = by.get(pr?.localCandidateId), rc = by.get(pr?.remoteCandidateId);
+          if (lc && rc) selected = { local: lc.candidateType, remote: rc.candidateType };
+        }
+      });
+    } catch { /* connection already closed */ }
+  }
+  return {
+    app: { version: VERSION, protocol: PROTOCOL },
+    browser: { brand: b.brand, major: b.major },
+    os: b.os,
+    shareLocalAddress: !!settings.shareLan,
+    lanOnly: !!settings.lan,
+    localAddress: { known: !!lanIp, class: lanClass(), source: lanSource },
+    microphonePermission: mic,
+    failure: { code: f.code || 'UNKNOWN', reason: f.reason, attempts: f.count || 1, secondsAgo: Math.round((Date.now() - f.at) / 1000) },
+    candidates: { local: f.local || [], remote: f.remote || [] },
+    candidatePairs: pairs,
+    selectedPair: selected,
+    iceTransitions: f.trans || [],
+    restartIce: { ran: false },
+  };
+}
+
+async function copyDiagnostic(f) {
+  const d = await buildDiagnostic(f);
+  const text = JSON.stringify(d, null, 2);
+  S.lastDiagnostic = d;
+  try { await navigator.clipboard.writeText(text); log('Diagnostic copied. It contains no IP addresses: only candidate types and address classes.'); }
+  catch { log(`Copy failed. Diagnostic:\n${text}`, 'err'); }
+}
+
+// An address learned from the browser can disappear again (on Android, "allow this time" expires). Look again when the
+// tab comes back, a device changes, or someone joins, at most every 30 seconds.
+let lastLanCheck = 0;
+async function recheckLan() {
+  if (lanSource !== 'probe' || !lanIp || !S.room || S.left || Date.now() - lastLanCheck < 30000) return;
+  lastLanCheck = Date.now();
+  const ip = await probeLocalIPv4();
+  if (ip && usablePrivate(ip)) { lanIp = ip; return; }
+  lanIp = null;
+  S.lanLost = true;
+  log('Your browser hid your local address again (the microphone permission may have been temporary). New connections to devices on the same network may fail until you allow it again.', 'err');
+  scheduleRender();
 }
 
 let pcCounter = 0;
@@ -757,7 +842,11 @@ class TrackedPC extends RTCPeerConnection {
     this._remoteAt = null;
     this._localList = [];
     this._remoteList = [];
+    this._trans = [];
     allPCs.add(this);
+    const mark = (kind, state) => { if (this._trans.length < 30) this._trans.push({ kind, state, ms: Date.now() - this._born }); };
+    this.addEventListener('iceconnectionstatechange', () => mark('ice', this.iceConnectionState));
+    this.addEventListener('connectionstatechange', () => mark('connection', this.connectionState));
     this.addEventListener('icecandidate', (e) => { if (e.candidate && e.candidate.candidate) this._localList.push(e.candidate.candidate); });
     this.addEventListener('connectionstatechange', () => {
       if (this.connectionState === 'closed') allPCs.delete(this);
@@ -798,31 +887,55 @@ class TrackedPC extends RTCPeerConnection {
   remoteCandidateCount() { return this.remoteCandidates().length; }
 }
 
-// "host×1 (mDNS), srflx×1" from raw candidate lines.
-function summarizeCandidates(lines) {
+// Candidate lines reduced to {type, protocol, addrClass}. No address ever leaves this function, so nothing derived
+// from it (the diagnostic, the failure text) can contain an IP address.
+function candClass(line) {
+  const f = String(line).replace(/^a=/, '').split(' ');
+  const type = /\btyp (\w+)/.exec(line)?.[1] || 'unknown';
+  const addr = f[4] || '';
+  let addrClass;
+  if (type === 'relay') addrClass = 'relay';
+  else if (addr.endsWith('.local')) addrClass = 'mdns';
+  else if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(addr) || /^(fe80|fc|fd)/i.test(addr)) addrClass = 'private';
+  else addrClass = 'public';
+  return { type, protocol: (f[2] || '').toLowerCase(), addrClass };
+}
+
+function summarizeClasses(list, lanKnown = false) {
   const counts = new Map();
-  for (const line of new Set(lines)) {
-    const f = line.split(' ');
-    const type = /\btyp (\w+)/.exec(line)?.[1] || '?';
-    const key = type + (f[4]?.endsWith('.local') ? ' (mDNS)' : '');
+  for (const c of list) {
+    const key = c.type + (c.addrClass === 'mdns' && !lanKnown ? ' (hidden .local)' : c.addrClass === 'private' && c.type === 'host' ? ' (private)' : '');
     counts.set(key, (counts.get(key) || 0) + 1);
   }
   return counts.size ? [...counts].map(([k, n]) => `${k}×${n}`).join(', ') : 'none';
 }
 
-const isMdnsHost = (l) => / typ host/.test(l) && l.split(' ')[4]?.endsWith('.local');
+// Why did a connection attempt fail? A pure function of what each side offered. It names one cause, or says it
+// does not know: it never guesses.
+function diagnose(local, remote, ctx = {}) {
+  const lanKnown = !!ctx.lanKnown;
+  const L = local.map((c) => (c.addrClass === 'mdns' && lanKnown ? { ...c, addrClass: 'private' } : c)); // we put our address back
+  const R = remote;
+  const hosts = (list) => list.filter((c) => c.type === 'host');
+  const myMdns = L.some((c) => c.addrClass === 'mdns');
+  const theirMdns = R.some((c) => c.addrClass === 'mdns');
+  const myPriv = hosts(L).some((c) => c.addrClass === 'private');
+  const theirPriv = hosts(R).some((c) => c.addrClass === 'private');
+  if (!L.length || !R.length) return { code: 'NO_CANDIDATES', text: 'One side offered no connection candidates at all (a browser or privacy setting, a VPN, or a very restrictive network).' };
+  if (myMdns) return { code: 'MY_MDNS', text: `Your browser hides your local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Press "Allow local connections": the browser asks for microphone access (nothing is turned on or sent), then lets this page see your local address and share it${ctx.shareLan === false ? ' (sharing is off in Network settings, so turn it on first)' : ''}. The connection then retries by itself.` };
+  if (!hosts(R).length) return { code: 'NO_REMOTE_HOST', text: "Their device offered no local address at all, so a same-network connection isn't possible from their side." };
+  if (theirMdns && !theirPriv) return { code: 'THEIR_MDNS', text: 'Their browser hides their local address behind a .local name. They need to press "Allow local connections" on their side (their page shows the button once it notices).' };
+  if (myPriv && theirPriv) return { code: 'BOTH_PRIVATE_BLOCKED', text: 'Both devices offered their local addresses, but nothing got through. This network may keep devices apart (guest Wi-Fi, client isolation), or a firewall on one device is blocking incoming connections. Use cellular, turn the firewall off, or add a TURN server.' };
+  if (ctx.lan) return { code: 'LAN_ONLY', text: 'LAN only is on, so the STUN server is not used: only people on the same network can connect.' };
+  if (theirPriv && !myPriv) return { code: 'DIFFERENT_NETWORKS', text: 'They offered a local-network address and you offered none on the same network, so you are probably on different networks. A TURN server is the fix for different networks.' };
+  return { code: 'UNKNOWN', text: 'We could not tell why this failed. Use "Copy diagnostic" and send it along.' };
+}
 
 function failureDetail(pc) {
-  const local = pc._localList, remote = pc.remoteCandidates();
-  const remoteOnlyLocal = remote.length > 0 && remote.every((l) => / typ host/.test(l));
-  const myHidden = local.some(isMdnsHost) && !lanIp; // hidden, and we do not know our own address to put back
-  const theirHidden = remote.some(isMdnsHost);
-  const parts = [`you offered ${summarizeCandidates(local)}${lanIp ? ` (your local address ${lanIp} is shared in place of the .local name)` : ''}; they offered ${summarizeCandidates(remote)}`];
-  if (myHidden) parts.push(`your browser hides your local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Press "Allow local connections": the browser asks for microphone access (nothing is turned on or sent), then lets this page see your local address and share it${settings.shareLan ? '' : ' (sharing is off in Network settings, so turn it on)'}. The connection then retries by itself`);
-  if (theirHidden) parts.push('their browser hides theirs; they need to do the same (their page offers the button)');
-  if (settings.lan) parts.push('LAN only is on, so no STUN: only people on the same network can connect');
-  if (!myHidden && !theirHidden && remoteOnlyLocal) parts.push('they offered only local-network addresses: either you are on different networks, or this network blocks devices from reaching each other (guest Wi-Fi, client or AP isolation, VPN, firewall). A TURN server is the fix for different networks');
-  return parts.join('. ');
+  const local = pc._localList.map(candClass), remote = pc.remoteCandidates().map(candClass);
+  const d = diagnose(local, remote, { lanKnown: !!lanIp, lan: settings.lan, shareLan: settings.shareLan });
+  const head = `you offered ${summarizeClasses(local, !!lanIp)}${lanIp ? ' (your local address is shared in place of the .local name)' : ''}; they offered ${summarizeClasses(remote)}`;
+  return { code: d.code, local, remote, text: `${head}. ${d.text}${settings.lan && d.code !== 'LAN_ONLY' ? ' LAN only is on, so no STUN: only people on the same network can connect.' : ''}` };
 }
 
 function classifyFailure(pc) {
@@ -839,17 +952,20 @@ function noteFailure(pc, peerId) {
   seenFailures.add(pc);
   const reason = classifyFailure(pc);
   const known = peerId || peerIdForPc(pc);
-  const detail = failureDetail(pc);
-  const hidden = pc._localList.some(isMdnsHost) && !lanIp;
+  const d = failureDetail(pc);
+  const detail = d.text;
   // The library retries every few seconds, so the same failure repeats. Count it instead of listing it again.
   const again = failures.find((f) => f.reason === reason && f.detail === detail && f.peerId === (known || null));
-  if (again) { again.count = (again.count || 1) + 1; again.at = Date.now(); again.pc = pc; scheduleRender(); return; }
+  if (again) { again.count = (again.count || 1) + 1; again.at = Date.now(); again.pc = pc; again.trans = pc._trans; scheduleRender(); return; }
+  const entry = { pc, at: Date.now(), reason, detail, code: d.code, local: d.local, remote: d.remote, trans: pc._trans, peerId: known || null };
   // The library's own error for the same attempt may already be listed (it knows the id, not the cause).
   const sibling = failures.find((f) => !f.pc && Date.now() - f.at < 30000);
-  if (sibling) Object.assign(sibling, { pc, reason, detail, hidden, peerId: sibling.peerId || known || null });
-  else failures.push({ pc, at: Date.now(), reason, detail, hidden, peerId: known || null });
+  if (sibling) Object.assign(sibling, entry, { peerId: sibling.peerId || known || null });
+  else failures.push(entry);
   while (failures.length > 8) failures.shift();
-  log(`Couldn't reach ${failureWho({ peerId: known })} directly: ${reason}. ${detail}.`, 'err');
+  log(`Couldn't reach ${failureWho({ peerId: known })} directly: ${reason}. ${detail}`, 'err');
+  // They hide their address: if they are reachable some other way, ask them to allow it.
+  if (d.code === 'THEIR_MDNS' && known && S.peers.has(known)) S.actions.ctl?.send({ t: 'allowLocal' }, { target: known }).catch(() => {});
   scheduleRender();
 }
 
@@ -1068,6 +1184,7 @@ function onPeerJoin(peerId) {
     log(`${short(peerId)} reconnected after the request to disconnect them. The request does not stop that; it is not re-applied.`, 'err');
   }
   S.peers.set(peerId, p);
+  recheckLan();
   sendHello(peerId);
   sendState(peerId);
   if (REC.on) S.actions.rec.send({ on: true, at: REC.startedAt }, { target: peerId }).catch(() => {});
@@ -1167,7 +1284,7 @@ function onRoomError(err) {
     const open = failures.find((f) => !f.peerId && f.pc && Date.now() - f.at < 60000);
     const dup = failures.find((f) => f.peerId === err.peerId && Date.now() - f.at < 30000);
     if (open) open.peerId = err.peerId;
-    else if (!dup) failures.push({ pc: null, at: Date.now(), reason: 'no connection after exchanging introductions', detail: '', peerId: err.peerId });
+    else if (!dup) failures.push({ pc: null, at: Date.now(), reason: 'no connection after exchanging introductions', code: 'UNKNOWN', detail: '', peerId: err.peerId });
     scheduleRender();
   }
 }
@@ -1677,7 +1794,7 @@ function noAnswerWatch() {
   S.othersSince ??= Date.now();
   if (!S.noAnswerReported && Date.now() - S.othersSince > CONNECT_TIMEOUT_MS) {
     S.noAnswerReported = true;
-    failures.push({ pc: null, at: Date.now(), reason: 'no answer', peerId: null, detail: 'Someone announced themselves in this room, but no connection was made. Their answer may not have reached you (relay loss, or you are using different relays)' });
+    failures.push({ pc: null, at: Date.now(), reason: 'no answer', code: 'NO_ANSWER', peerId: null, detail: 'Someone announced themselves in this room, but no connection was made. Their answer may not have reached you (relay loss, or you are using different relays)' });
     log("Couldn't reach someone who is in this room (no answer). Their reply may not have reached you.", 'err');
   }
 }
@@ -1694,6 +1811,10 @@ function renderStatus() {
   for (const rq of S.requests) {
     msgs.push({ cls: 'warn', text: `${displayName(rq.from)} (unverified name) asked you to disconnect ${displayName(rq.target)}. You can ignore this.`, actions: [
       { label: 'Disconnect', fn: () => resolveRequest(rq, true) }, { label: 'Ignore', fn: () => resolveRequest(rq, false) }] });
+  }
+  if (S.allowLocalAsk) msgs.push({ cls: 'warn', text: `${S.allowLocalAsk} can't reach you because your browser hides your local address.`, actions: [{ label: 'Allow local connections', fn: () => { S.allowLocalAsk = null; allowLocalConnections(); } }, { label: 'Dismiss', fn: () => { S.allowLocalAsk = null; scheduleRender(); } }] });
+  if (!lanIp && settings.shareLan && (S.lanLost || failures.some((f) => f.code === 'MY_MDNS' && Date.now() - f.at < 5 * 60000))) {
+    msgs.push({ cls: 'warn', text: S.lanLost ? 'Your browser hid your local address again, so devices on the same network may not be able to connect to you.' : 'Your browser is hiding your local address, so devices on the same network cannot connect to you.', actions: [{ label: 'Allow local connections', fn: allowLocalConnections }] });
   }
   if (!navigator.onLine) msgs.push({ cls: 'warn', text: "You're offline. The call picks up again by itself when the network is back." });
   for (const r of rosterRows()) {
@@ -1786,8 +1907,9 @@ function renderRoster() {
   for (const f of failures.filter((x) => Date.now() - x.at < 5 * 60000)) {
     const row = el('div', { class: 'rrow fail' });
     row.append(el('div', { class: 'nm', text: `Couldn't reach ${failureWho(f)} directly${f.count > 1 ? ` (tried ${f.count} times)` : ''}` }));
-    row.append(el('div', { class: 'meta', text: `${f.reason} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer${f.detail ? '. ' + f.detail + '.' : ''}` }));
-    if (f.hidden && !lanIp) row.append(el('button', { text: 'Allow local connections', title: 'Asks the browser for microphone access so it reveals your local address. Nothing is turned on or sent.', onclick: allowLocalConnections }));
+    row.append(el('div', { class: 'meta', text: `${f.reason}${f.code ? ` [${f.code}]` : ''} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer${f.detail ? '. ' + f.detail : ''}` }));
+    if (f.code === 'MY_MDNS' && !lanIp) row.append(el('button', { text: 'Allow local connections', title: 'Asks the browser for microphone access so it reveals your local address. Nothing is turned on or sent.', onclick: allowLocalConnections }), ' ');
+    row.append(el('button', { text: 'Copy diagnostic', title: 'Copies what this failure looked like, with no IP addresses in it', onclick: () => copyDiagnostic(f) }));
     kids.push(row);
   }
   box.replaceChildren(...kids);
@@ -1949,7 +2071,7 @@ async function pollStats() {
           const host = lt === 'relay' && l?.url ? hostOf(l.url) : (settings.turnUrl ? hostOf(settings.turnUrl) : 'a relay');
           st.pathKind = 'relay';
           st.path = `relay — media passes through ${host} (still DTLS-SRTP encrypted)`;
-        } else if (lt === 'host' && rt === 'host') { st.pathKind = 'direct-lan'; st.path = 'direct (local network)'; }
+        } else if (lt === 'host' && rt === 'host') { st.pathKind = 'direct-lan'; st.path = lanIp ? 'direct (local network, shared address)' : 'direct (local network)'; }
         else { st.pathKind = 'direct-stun'; st.path = 'direct (peer-to-peer, address found via STUN)'; }
         if (typeof pair.availableOutgoingBitrate === 'number') uplink = Math.max(uplink ?? 0, pair.availableOutgoingBitrate);
       }
@@ -2076,6 +2198,11 @@ function closePeer(id) {
 
 function onCtl(from, m) {
   if (!m || typeof m !== 'object') return;
+  if (m.t === 'allowLocal') {
+    // Old versions ignore this message. It is only a request: nothing happens unless the user presses the button.
+    if (!lanIp && settings.shareLan) { S.allowLocalAsk = displayName(from); scheduleRender(); }
+    return;
+  }
   if (m.t === 'resend' && ['cam', 'mic', 'screen'].includes(m.kind)) {
     const stream = S.my[m.kind], p = S.peers.get(from);
     if (!stream || !p) return;
@@ -2477,6 +2604,7 @@ async function listDevices() {
 
 function onDeviceChange() {
   refreshOwnLan();
+  recheckLan();
   listDevices().then(() => log('A camera, microphone or speaker was added or removed.'));
 }
 
@@ -2746,7 +2874,7 @@ async function acquireWakeLock() {
 }
 function releaseWakeLock() { try { S.wake?.release(); } catch {} S.wake = null; }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && S.room && !S.left && (!S.wake || S.wake.released)) acquireWakeLock();
+  if (document.visibilityState === 'visible' && S.room && !S.left) { recheckLan(); if (!S.wake || S.wake.released) acquireWakeLock(); }
 });
 
 // ---------------------------------------------------------------------------
@@ -2875,6 +3003,7 @@ const COMMANDS = {
       '/invitehost <host:port>|auto   set the LAN address used in invite links',
       '/lan on|off       LAN only (no STUN) — applies on next join',
       '/shareaddr on|off share your local network address so same-network devices connect (default on)',
+      '/diag [peer]      copy what the latest failed connection looked like (no IP addresses in it)',
       '/localfix         ask for microphone access once, only so the browser reveals your local address (nothing is turned on)',
       '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
       '/relays           introduction servers: probe result and room socket for each',
@@ -2977,6 +3106,13 @@ const COMMANDS = {
     log(`Invite links now use ${inviteBase}`);
   },
   localfix() { return allowLocalConnections(); },
+  async diag(args) {
+    const recent = failures.filter((f) => Date.now() - f.at < 5 * 60000);
+    const f = (args[0] ? recent.find((x) => x.peerId && x.peerId.startsWith(args[0])) : null) || recent[recent.length - 1];
+    if (!f) { log('No recent failure to describe. (/diag explains the latest failed connection attempt.)'); return; }
+    await copyDiagnostic(f);
+    log(JSON.stringify(S.lastDiagnostic, null, 2));
+  },
   shareaddr(args) {
     if (!['on', 'off'].includes(args[0])) { log(`Sharing your local network address is ${settings.shareLan ? 'on' : 'off'}${lanIp ? ` (${lanIp})` : ''}. Usage: /shareaddr on|off (applies on next join)`); return; }
     settings.shareLan = args[0] === 'on'; saveSettings();
@@ -3215,7 +3351,7 @@ bootLanding();
 // Read-only handle for tests and DevTools.
 window.rtc = {
   version: VERSION, protocol: PROTOCOL, S, chooseLevel, rosterRows, allTracksEnded,
-  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, friendlyName, egressConfigProblems, activeRelays, rankLanAddr, usablePrivate, getLanIp: () => lanIp, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
+  run: runCommand, relayStatus, failures, allPCs, REC, TrackedPC, diagnose, candClass, buildDiagnostic, getLastDiagnostic: () => S.lastDiagnostic, friendlyName, egressConfigProblems, activeRelays, rankLanAddr, usablePrivate, getLanIp: () => lanIp, explainMediaError, devs, AUD, parseRelayList, probes, rt4Check, receivesOf, seatOrder, pcClosed,
 };
 </script>
 </body>
