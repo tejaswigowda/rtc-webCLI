@@ -26,6 +26,8 @@ const types = {
   '.json': 'application/json; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.webmanifest': 'application/manifest+json',
 };
 
 // https is on by default (self-signed) so other devices on the LAN get a secure origin. NO_HTTPS=1 turns it off;

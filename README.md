@@ -77,6 +77,10 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 
 - **Device Control**: **Devices…** lists cameras, microphones and (where the browser allows it) speakers, with a microphone level meter and a speaker test sound. Changing the camera or microphone while live swaps the track on every connection without dropping the call. **Flip camera** cycles cameras on a phone. If a device is unplugged or taken by another app, the page says so and stops that stream. A blocked or busy camera gets plain-language help for each browser instead of a bare error. Your choices are remembered
 
+- **Installable, Opens Offline (PWA)**: like the other webCLIs, it has a web app manifest, icons (including maskable ones) and a service worker, so it can be installed from the browser (an install icon appears in the header where the browser offers it; on iPhone use Share, then Add to Home Screen) and it **opens without a network** from the cache of its own files: the page, the About page, the pinned libraries and the diagrams. **A call still needs a network**, because introductions go through public relays; offline, the start screen says so. The worker is network-first, so online you always get the current release (the page and the libraries it checks by SHA-256 never come from different releases), and it never handles `/whoami` or `/lan.json`, WebSockets or media
+
+- **Tooltips on Everything**: every button, select and disclosure explains itself on hover or long-press, including dialog and banner buttons and the named reactions; a test fails if any control lacks one
+
 - **New Room (+)**: a **+** in the header, and the logo, go back to the start screen with no invite in the address bar. They always ask first, saying what will happen: in a room you are disconnected from everyone and your devices stop; with only an invite open, the invite is dropped from the address bar (if you created the room, the prompt reminds you to copy the link). **+** is hidden on a bare start screen, where there is nowhere to go back to
 
 - **Works on a Phone**: the same header as the other webCLIs (logo, "peer-to-peer" and "No media server" tags, and +, book, info and GitHub icons), and the family colour palette. Every control is an icon with a label that collapses to the icon alone on small screens, with 44 px touch targets and Leave always on screen. On a phone the video grid is the main view; a chat button swaps it for the roster, chat and console, and a **More** button holds layout, send quality and Move room. Dialogs slide up from the bottom, inputs are sized so iOS does not zoom, and the screen's safe areas are respected. The About page is responsive too
@@ -279,7 +283,7 @@ The roster entry (and console line) lists the kinds of addresses each side offer
 
 ### Deployment
 
-Deploy the `docs/` folder to any static host over https. **GitHub Pages** works; no special headers are needed.
+Deploy the `docs/` folder to any static host over https (the service worker and install prompt need https, or localhost). Bump `CACHE_VERSION` in `docs/service-worker.js` with each release. **GitHub Pages** works; no special headers are needed.
 
 ### Upgrading the vendored libraries
 
@@ -331,6 +335,8 @@ npx playwright install chromium    # first time only
 | Devices and layout | device lists, switching the camera while live (track swapped on every connection, roster still complete), mirror toggle, permission-error help, speaker highlight with fake microphones, pin and unpin, speaker layout, hand, reactions, timer, offline banner, reconnect after a dropped link | `npm test`; **speakers, phones, flip camera, wake lock and full screen are not tested** |
 | Same network | with addresses hidden: two windows connect when served by `server.js`; on a static host they do not connect until the microphone is allowed, the failure names `.local`, and they then connect without a reload; the server serves https and a plain-http LAN visit links to it | `npm test`; **phones and real routers not yet tested** |
 | `/whoami` | answers only when certain: direct LAN caller, loopback with a local `Host`; null behind a tunnel, with a forwarding header, or for a public or Docker caller (RV2). A static host never sees `/whoami` or `/lan.json` (RV5). The local address chosen prefers 192.168, then 10, then 172.16–31, never Docker's bridge first (RV8) | `npm test` |
+| PWA | manifest with 192/512 and maskable PNG icons that all exist; the service worker precaches the app, About page, pinned libraries and icons; offline, the app opens, says it is offline, loads the libraries and About page, and `/whoami` is never cached | `npm test`; **installing on a phone and the browser install prompt are not tested** |
+| Tooltips | every button, select and summary has a tooltip: room, start screen, Devices dialog, Move dialog, reaction menu | `npm test` |
 | About page | static, no scripts, every diagram loads, no request leaves the origin | `npm test` |
 | Small screens | on a 360 px phone: no horizontal scroll (landing, About, room, chat panel, More), three header icons, icon-only 44 px controls with Leave on screen, chat button swaps grid and panel | `npm test` (Chromium touch emulation); **real phones and Safari not tested** |
 | Chat | everyone and direct messages, direct messages reach only their recipient, console parity | `npm test` |
@@ -378,6 +384,9 @@ Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them
 docs/
 ├── about/index.html        # About page: how it works, with diagrams (static, no scripts)
 ├── img/                    # SVG diagrams used by the About page and this README
+├── manifest.json           # Web app manifest (installable)
+├── service-worker.js       # Offline cache of this site's own files (bump CACHE_VERSION per release)
+├── icon.svg, icon-192.png, icon-512.png, icon-*-maskable.png, apple-touch-icon.png
 ├── index.html              # The whole app (UI, rooms, roster, console)
 └── lib/
     ├── trystero-nostr.js   # Vendored Trystero (Nostr strategy), hash-pinned
@@ -411,9 +420,11 @@ What this README and the About page may say. RT23 reviews them against this list
 - A direct message is sent only to the browser of the person you chose; chat is kept in memory and is not stored by us.
 - Only the room creator is offered a Record button, and everyone else is told in their own window when a recording starts. This covers recording in this app only.
 - On the same network, the page shares your local address so connections can work without `.local` names. State the mechanism ("is designed to"), and the condition: served by `server.js`, or after Mic or Camera is allowed.
+- The app can be installed and opens offline; a call still needs a network connection for introductions.
 - Works for small rooms. Quote a number only when it comes from the RT9 table, with the date and hardware.
 
 **Not allowed**
+- "Works offline", "offline-first" or "offline calls" unqualified: only the app opens offline, and a call needs the network.
 - "Serverless" unqualified (introductions use third-party relays); "zero egress" or "nothing leaves your device".
 - "Zoom replacement" or "Zoom alternative", without the cap in the same sentence.
 - "Anonymous", or "private from other participants" (they see your IP address; names are self-asserted).

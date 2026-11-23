@@ -525,6 +525,53 @@ try {
   check('both inputs ask phone keyboards for a Send key', await A.evaluate(() => document.querySelector('#consoleIn').enterKeyHint === 'send' && document.querySelector('#chatIn').enterKeyHint === 'send'));
   await A.click('#tabConsole');
 
+  // --- Tooltips on every button, select and summary ------------------------------------------------------------------------
+  const untitled = (pg) => pg.evaluate(() => [...document.querySelectorAll('button, select, summary')].filter((e) => !e.title).map((e) => e.id || e.textContent.trim().slice(0, 24)));
+  await sleep(200);
+  check('every button, select and summary in the room has a tooltip', (await untitled(A)).length === 0, (await untitled(A)).join(', '));
+  await A.click('#btnDevices'); await A.waitForSelector('#overlayCard'); await sleep(150);
+  check('...including the Devices dialog', (await untitled(A)).length === 0, (await untitled(A)).join(', '));
+  await A.click('#overlayCard button:has-text("Done")');
+  await A.click('#btnMove'); await A.waitForSelector('#overlayCard'); await sleep(150);
+  check('...and the Move room dialog', (await untitled(A)).length === 0, (await untitled(A)).join(', '));
+  await A.click('#overlayCard button:has-text("Cancel")');
+  await A.click('#btnReact'); await sleep(150);
+  check('...and the reaction menu (named reactions)', (await untitled(A)).length === 0 && /Thumbs up/.test(await A.getAttribute('#reactMenu button >> nth=0', 'title')));
+  await A.click('#btnReact');
+  const tipCtx = await browser.newContext();
+  const tipPage = await tipCtx.newPage();
+  await tipPage.goto(`${ORIGIN}/#k=${'T2'.padEnd(22, 't')}`); await sleep(300);
+  check('...and on the start screen with an invite open', (await untitled(tipPage)).length === 0, (await untitled(tipPage)).join(', '));
+  await tipCtx.close();
+
+  // --- Installable and offline (PWA) --------------------------------------------------------------------------------------------
+  const manifest = await (await fetch(`${ORIGIN}/manifest.json`)).json();
+  const iconRes = await Promise.all(manifest.icons.map((i) => fetch(new URL(i.src, `${ORIGIN}/`))));
+  const has = (size, purpose) => manifest.icons.some((i) => i.sizes === size && i.purpose === purpose && i.type === 'image/png');
+  check('manifest: name, start_url, standalone, theme colours, and 192/512 plus maskable PNG icons that all exist',
+    manifest.name === 'rtc-webCLI' && manifest.start_url === './' && manifest.display === 'standalone' && manifest.theme_color === '#0d0f1a'
+    && has('192x192', 'any') && has('512x512', 'any') && has('192x192', 'maskable') && has('512x512', 'maskable') && iconRes.every((r) => r.ok), `${manifest.icons.length} icons`);
+  const pwaCtx = await browser.newContext();
+  const pwa = await pwaCtx.newPage();
+  await pwa.goto(`${ORIGIN}/`);
+  await pwa.evaluate(() => navigator.serviceWorker.ready.then(() => true));
+  await until(() => pwa.evaluate(() => !!navigator.serviceWorker.controller), 10000);
+  const cached = await pwa.evaluate(async () => { const names = await caches.keys(); const c = await caches.open(names[0]); return { names, keys: (await c.keys()).map((r) => new URL(r.url).pathname) }; });
+  check('service worker installs and precaches the app, the About page, the pinned libraries and the icons',
+    cached.names.some((n) => /^rtc-webCLI-/.test(n)) && ['/index.html', '/about/', '/lib/trystero-nostr.js', '/lib/qrcode.js', '/icon-192.png', '/manifest.json'].every((p) => cached.keys.includes(p)), cached.keys.length + ' files');
+  await pwaCtx.setOffline(true);
+  await pwa.reload();
+  const offline = await pwa.evaluate(async () => ({
+    brand: !!document.querySelector('#brand'), create: !!document.querySelector('#btnCreate'), note: !document.querySelector('#offlineNote').classList.contains('hidden'),
+    lib: (await fetch('lib/trystero-nostr.js').then((r) => r.ok).catch(() => false)),
+    about: (await fetch('about/').then((r) => r.ok).catch(() => false)),
+    whoami: (await fetch('whoami').then((r) => r.ok).catch(() => 'network-only')),
+  }));
+  check('offline: the app opens from the cache, says it is offline, and the libraries and About page load', offline.brand && offline.create && offline.note && offline.lib && offline.about, JSON.stringify(offline));
+  check('offline: /whoami is never served from the cache', offline.whoami === 'network-only' || offline.whoami === false, String(offline.whoami));
+  await pwaCtx.setOffline(false);
+  await pwaCtx.close();
+
   // --- RF1 / RF2 / RF15: the roster guarantee is checked independently ---------------------------
   // The roster re-renders at least once a second; read the DOM only after it has caught up.
   let rt4;

@@ -2,10 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' blob:; style-src 'unsafe-inline'; connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:*; img-src 'self' data: blob:; media-src blob: mediastream:; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' blob:; style-src 'unsafe-inline'; connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:*; img-src 'self' data: blob:; media-src blob: mediastream:; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
 <title>rtc-webCLI</title>
+<meta name="description" content="Invite-link rooms for audio, video and screen share, directly between browsers. No account and no media server of ours.">
+<meta name="theme-color" content="#0d0f1a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="rtc">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   /* the Web-CLI family palette (shared with blog-webCLI and ffmpeg-webCLI) */
   :root { color-scheme:dark; --bg:#0d0f1a; --panel:#151827; --surface2:#1e2236; --surface3:#252a42; --line:#2e3350; --rule:#5b515f; --fg:#e2e8f0; --dim:#94a3b8; --ok:#70db97; --warn:#f59e0b; --bad:#ef4444; --acc:#3665b6; --acc-h:#81e2f8; --link:#81e2f8; --code:#080a10; }
@@ -235,6 +244,7 @@
     <button id="btnQr" class="header-icon" type="button" title="Show invite QR code" aria-label="Show invite QR code"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></button>
   </div>
   <nav class="help-nav" aria-label="Help">
+    <button id="btnInstall" class="header-icon hidden" type="button" title="Install rtc webCLI as an app on this device (it then opens offline)" aria-label="Install rtc webCLI as an app"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></button>
     <button id="btnNew" class="header-icon hidden" type="button" title="New room: back to the start screen" aria-label="New room: back to the start screen"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
     <a href="about/" class="header-icon" id="navAbout" title="How it works, with diagrams" aria-label="How it works"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></a>
     <a href="about/#limits" class="header-icon" id="navLimits" title="What it is and is not" aria-label="What it is and is not"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></a>
@@ -246,6 +256,7 @@
   <h1>A video room you open with a link</h1>
   <p class="sub">Audio, video and screen share, directly between browsers. No account, and no media server of ours.</p>
 
+  <div id="offlineNote" class="banner warn hidden">You are offline. The app opened from your device, but a call needs a connection to reach the introduction servers.</div>
   <div id="insecure" class="banner bad hidden"></div>
   <div id="fatal" class="banner bad hidden"></div>
 
@@ -255,9 +266,9 @@
     <input id="name" type="text" maxlength="24" autocomplete="off" placeholder="Your name (optional)">
 
     <div class="row">
-      <button id="btnCreate" class="primary">Create a room</button>
-      <button id="btnJoin" class="primary hidden">Join room</button>
-      <button id="btnCopyLanding" class="hidden">Copy invite</button>
+      <button id="btnCreate" class="primary" title="Create a new room and a fresh invite link. You become its creator.">Create a room</button>
+      <button id="btnJoin" class="primary hidden" title="Join this room. Camera and microphone stay off until you turn them on.">Join room</button>
+      <button id="btnCopyLanding" class="hidden" title="Copy the invite link so you can share it">Copy invite</button>
     </div>
     <p class="dim" id="landingInvite"></p>
 
@@ -282,7 +293,7 @@
       <input id="setInviteHost" type="text" autocomplete="off" placeholder="blank = detect automatically">
       <label for="setRelays">Introduction relays (comma-separated wss:// URLs; blank = built-in list)</label>
       <input id="setRelays" type="text" autocomplete="off">
-      <div class="row"><button id="btnSaveSettings">Save settings</button><span class="dim" id="settingsNote"></span></div>
+      <div class="row"><button id="btnSaveSettings" title="Save these network settings on this device">Save settings</button><span class="dim" id="settingsNote"></span></div>
     </details>
   </div>
 
@@ -307,14 +318,14 @@
     <h3>Roster <span class="dim" style="text-transform:none;letter-spacing:0">— who is connected and what they receive</span></h3>
     <div id="roster"></div>
     <div id="tabs">
-      <button id="tabChat" class="tab on" type="button">Chat <span id="chatBadge" class="ubadge hidden">0</span></button>
-      <button id="tabConsole" class="tab" type="button">Console <span class="dim">/help</span></button>
+      <button id="tabChat" class="tab on" type="button" title="Show the chat">Chat <span id="chatBadge" class="ubadge hidden">0</span></button>
+      <button id="tabConsole" class="tab" type="button" title="Show the command console (type /help)">Console <span class="dim">/help</span></button>
     </div>
     <div id="chatWrap">
       <div id="chatOut"></div>
       <div id="chatBar">
-        <div class="row"><label class="dim" for="chatTo">To</label><select id="chatTo"><option value="">Everyone</option></select></div>
-        <div class="row"><input id="chatIn" type="text" maxlength="1000" autocomplete="off" enterkeyhint="send" placeholder="Type a message"><button id="chatSend" class="primary cbtn" type="button" aria-label="Send message"><span class="lbl">Send</span></button></div>
+        <div class="row"><label class="dim" for="chatTo">To</label><select id="chatTo" title="Who receives your message"><option value="">Everyone</option></select></div>
+        <div class="row"><input id="chatIn" type="text" maxlength="1000" autocomplete="off" enterkeyhint="send" placeholder="Type a message"><button id="chatSend" class="primary cbtn" type="button" aria-label="Send message" title="Send the message"><span class="lbl">Send</span></button></div>
       </div>
     </div>
     <div id="consoleWrap" class="hidden">
@@ -336,9 +347,9 @@
     </div>
     <div id="moreCtl">
       <label class="dim" for="selLayout">Layout</label>
-      <select id="selLayout" style="width:auto"><option value="grid">Grid</option><option value="speaker">Speaker</option></select>
+      <select id="selLayout" style="width:auto" title="How video tiles are arranged"><option value="grid">Grid</option><option value="speaker">Speaker</option></select>
       <label class="dim" for="selRes">Send quality</label>
-      <select id="selRes" style="width:auto">
+      <select id="selRes" style="width:auto" title="How much video quality you send">
         <option value="auto">Auto</option>
         <option value="720">720p</option>
         <option value="360">360p</option>
@@ -645,6 +656,29 @@ async function loadVerified(file) {
 // ---------------------------------------------------------------------------
 // Overlay screens
 // ---------------------------------------------------------------------------
+// Every button explains itself. Dialogs and banners build their buttons from a label, so they look the text up here;
+// anything not listed falls back to its own label (see ensureTitles).
+const TIPS = {
+  'Join anyway': 'Join the room. People in it will see your IP address.', 'Cancel': 'Close this without changing anything', 'OK': 'Close this message',
+  'Done': 'Close this dialog', 'Close': 'Close this dialog', 'Stay': 'Stay in the room', 'Stay in this room': 'Stay in the room', 'Stay here': 'Stay on this page',
+  'Leave': 'Leave the room and stop every camera, microphone and screen share', 'Leave the room': 'Leave the room and stop every camera, microphone and screen share',
+  'Leave and go to the start': 'Leave the room and go back to the start screen', 'Go to the start': 'Drop the invite from the address bar and go to the start screen',
+  'Back to start': 'Go back to the start screen', 'Move': 'Move to a new room and invite the people you ticked', 'Join the new room': 'Leave this room and join the new one',
+  'Start recording': 'Start recording the room on this device. Everyone is told.', 'Use this address': 'Use this address in invite links and the QR code',
+  'Send to the room': 'Send your camera or microphone to everyone in the room', 'Disconnect': 'Disconnect from that person. They can still reconnect.',
+  'Ignore': 'Do nothing. The request is dropped.', 'Dismiss': 'Hide this message', 'Allow local connections': 'Ask the browser for microphone access once so it shows this page your local address. Nothing is turned on or sent.',
+  'Stop camera': 'Turn your camera off', 'Stop sharing': 'Stop sharing your screen', 'Test microphone': 'Show a level meter for the chosen microphone (nothing is sent)',
+  'Stop test': 'Stop the microphone test and release the microphone', 'Play test sound': 'Play a short sound on the chosen speaker',
+};
+const tipFor = (label) => TIPS[label] || label;
+function ensureTitles() {
+  document.querySelectorAll('button, select, summary').forEach((e) => {
+    if (e.title) return;
+    const t = e.getAttribute('aria-label') || e.textContent.trim();
+    if (t) e.title = tipFor(t);
+  });
+}
+
 function showScreen({ title, body, actions = [], node }) {
   stopMicTest();
   const card = $('#overlayCard');
@@ -652,7 +686,7 @@ function showScreen({ title, body, actions = [], node }) {
   if (body) for (const para of [].concat(body)) card.append(el('p', { text: para }));
   if (node) card.append(node);
   const bar = el('div', { class: 'actions' });
-  for (const a of actions) bar.append(el('button', { class: a.cls || '', text: a.label, onclick: () => { hideScreen(); a.fn?.(); } }));
+  for (const a of actions) bar.append(el('button', { class: a.cls || '', text: a.label, title: a.title || tipFor(a.label), onclick: () => { hideScreen(); a.fn?.(); } }));
   card.append(bar);
   $('#overlay').classList.remove('hidden');
 }
@@ -1452,7 +1486,7 @@ function renderPreview() {
     box.append(el('div', { style: 'margin-top:8px' }), v);
   }
   box.append(el('p', { class: 'dim', text: `Sending will share ${[S.draft.cam && 'your camera', S.draft.mic && 'your microphone'].filter(Boolean).join(' and ')} with ${n} ${n === 1 ? 'person' : 'people'} in the room.` }));
-  box.append(el('button', { class: 'primary', text: 'Send to the room', onclick: sendDraft }), ' ', el('button', { text: 'Cancel', onclick: cancelDraft }));
+  box.append(el('button', { class: 'primary', text: 'Send to the room', title: TIPS['Send to the room'], onclick: sendDraft }), ' ', el('button', { text: 'Cancel', title: 'Discard this preview and release the device', onclick: cancelDraft }));
 }
 
 function cancelDraft() {
@@ -1847,7 +1881,7 @@ function renderStatus() {
   box.dataset.sig = sig;
   box.replaceChildren(...msgs.map((m) => {
     const d = el('div', { class: 'banner ' + m.cls, text: m.text });
-    for (const a of m.actions || []) d.append(' ', el('button', { text: a.label, onclick: a.fn }));
+    for (const a of m.actions || []) d.append(' ', el('button', { text: a.label, title: tipFor(a.label), onclick: a.fn }));
     return d;
   }));
 }
@@ -2839,7 +2873,8 @@ function onReact(peerId, m) {
 function toggleReactMenu() {
   const menu = $('#reactMenu');
   if (!menu.classList.contains('hidden')) { menu.classList.add('hidden'); return; }
-  menu.replaceChildren(...REACTIONS.map((e) => el('button', { type: 'button', text: e, onclick: () => { sendReaction(e); menu.classList.add('hidden'); } })));
+  const REACTION_NAMES = { '👍': 'Thumbs up', '👏': 'Applause', '❤️': 'Love', '😂': 'Laugh', '😮': 'Surprise', '🎉': 'Celebrate' };
+  menu.replaceChildren(...REACTIONS.map((e) => el('button', { type: 'button', text: e, title: `Send a reaction: ${REACTION_NAMES[e]}`, 'aria-label': REACTION_NAMES[e], onclick: () => { sendReaction(e); menu.classList.add('hidden'); } })));
   menu.classList.remove('hidden');
 }
 document.addEventListener('click', (ev) => {
@@ -3354,6 +3389,30 @@ $('#consoleRun').prepend(svgIcon('send'));
 $('#consoleRun').onclick = submitConsole;
 
 bootLanding();
+
+// ---- Installable and offline ----
+// The service worker caches this site's own files so the app opens without a network. A call still needs one:
+// introductions go through public relays.
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register(new URL('service-worker.js', location.origin + APP_DIR), { scope: APP_DIR }).catch((e) => console.warn('rtc-webCLI: offline support unavailable', e));
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) log('A new version was installed. Reload the page after your call to use it.'); });
+}
+let installEvent = null;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvent = e; $('#btnInstall').classList.remove('hidden'); });
+addEventListener('appinstalled', () => { installEvent = null; $('#btnInstall').classList.add('hidden'); });
+$('#btnInstall').onclick = async () => {
+  if (!installEvent) return;
+  installEvent.prompt();
+  await installEvent.userChoice.catch(() => {});
+  installEvent = null;
+  $('#btnInstall').classList.add('hidden');
+};
+const syncOffline = () => $('#offlineNote').classList.toggle('hidden', navigator.onLine);
+addEventListener('online', syncOffline); addEventListener('offline', syncOffline); syncOffline();
+
+ensureTitles();
+new MutationObserver(() => ensureTitles()).observe(document.body, { childList: true, subtree: true });
 
 // Read-only handle for tests and DevTools.
 window.rtc = {

@@ -1,0 +1,28 @@
+{
+  "name": "rtc-webCLI",
+  "short_name": "rtc",
+  "description": "Invite-link rooms for audio, video and screen share, directly between browsers. No account and no media server of ours. The app loads offline; a call needs a network connection for introductions.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0d0f1a",
+  "background_color": "#0d0f1a",
+  "categories": ["social", "utilities"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-192-maskable.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    {
+      "name": "How it works",
+      "short_name": "About",
+      "description": "What rtc-webCLI sends, to whom, and its limits",
+      "url": "./about/",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
