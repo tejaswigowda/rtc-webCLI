@@ -7,6 +7,7 @@ import http from 'node:http';
 import { answerWhoami, rankLan } from '../scripts/whoami.mjs';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 const PORT = 18080 + Math.floor(Math.random() * 500);
@@ -403,6 +404,29 @@ try {
   check('SW5/SW7 once the address is shared the banner and the stale MY_MDNS failure are gone', await until(async () => !/Allow local connections/.test(await sPages[0].textContent('#status')) && !(await sPages[0].textContent('#roster')).includes('[MY_MDNS]'), 20000));
   check('SW9 the path says it is a local network connection using the shared address', await until(() => sPages[0].evaluate(() => [...window.rtc.S.peers.values()].some((p) => /shared address/.test(p.stats?.path || ''))), 20000));
   check('RV5 a static host never sees /whoami or /lan.json requests', sReqs.every((u) => !/\/(whoami|lan\.json)/.test(u)), sReqs.filter((u) => /whoami|lan\.json/.test(u)).join(', '));
+  // --- Typing the local address instead of allowing the microphone ---------------------------------------------------
+  const lanNow = Object.values(os.networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal && /^(192\.168\.|10\.)/.test(i.address))?.address;
+  const tUrl = `http://localhost:${staticSrv.address().port}/docs/#k=${'Z'.repeat(22)}`;
+  const tPages = [];
+  for (const n of ['Tia', 'Tom']) {
+    const ctx = await maskedStatic.newContext();
+    await ctx.addInitScript(({ relays, n }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n });
+    const pg = await ctx.newPage();
+    await pg.goto(tUrl); await join(pg);
+    tPages.push(pg);
+  }
+  await until(async () => /Allow local connections/.test(await tPages[0].textContent('#status')), 60000);
+  await tPages[0].click('#status button:has-text("Allow local connections")');
+  const dlg = await tPages[0].textContent('#overlayCard');
+  check('"Allow local connections" explains the microphone prompt first and offers typing the address instead', /microphone prompt/.test(dlg) && await tPages[0].isVisible('#overlayCard input') && await tPages[0].isVisible('#overlayCard button:has-text("Ask the browser")'));
+  await tPages[0].fill('#overlayCard input', '8.8.8.8'); await tPages[0].click('#overlayCard button:has-text("Use this address")');
+  check('a public or malformed address is refused and nothing is shared', await tPages[0].isVisible('#overlayCard') && (await tPages[0].evaluate(() => window.rtc.getLanIp())) === null);
+  await tPages[0].fill('#overlayCard input', lanNow || '192.168.0.50'); await tPages[0].click('#overlayCard button:has-text("Use this address")');
+  check('a typed local address is shared with no permission prompt and no media tracks opened', await until(() => tPages[0].evaluate(() => window.rtc.getLanIp()), 5000) === (lanNow || '192.168.0.50') && await tPages[0].evaluate(() => window.rtc.S.allTracks.size === 0));
+  await tPages[1].fill('#consoleIn', `/myaddr ${lanNow || '192.168.0.50'}`); await tPages[1].press('#consoleIn', 'Enter');
+  if (lanNow) check('both sides typed their address: the pair connects with the microphone never allowed', await until(() => tPages[0].evaluate(() => window.rtc.S.peers.size === 1 && [...window.rtc.S.peers.values()][0].hello), 100000));
+  else console.log('SKIP  no private LAN address on this machine for the typed-address connection check');
+  await Promise.all(tPages.map((pg) => pg.context().close()));
   await maskedStatic.close(); staticSrv.close();
 
   // --- Guest names: two friendly words, not Guest-XXXX ------------------------------------------------------------
@@ -536,8 +560,55 @@ try {
   check('...and copies only the selection when text is selected', await A.evaluate(() => window.__copied === document.querySelector('#consoleOut > *').textContent));
   await A.evaluate(() => getSelection().removeAllRanges());
 
+  // --- Styled tooltips and the Play icon --------------------------------------------------------------------------------
+  check('the console Run button uses the play icon', (await A.getAttribute('#consoleRun svg', 'data-name')) === 'play' && (await A.getAttribute('#chatSend svg', 'data-name')) === 'send');
+  const tipOf = () => A.evaluate(() => { const t = document.querySelector('#tip'); return t.classList.contains('show') ? t.textContent : ''; });
+  for (const [sel, re] of [['#btnInvite', /invite link/i], ['#btnQr', /QR/], ['#navAbout', /how it works/i], ['#navLimits', /what it is/i], ['a.gh', /GitHub/], ['#btnNew', /New room/], ['#btnLeave', /./], ['#consoleRun', /Run/], ['#consoleCopy', /Copy/]]) {
+    await A.mouse.move(2, 2); await sleep(60);
+    await A.hover(sel); await sleep(600);
+    const shown = await tipOf();
+    check(`hovering ${sel} shows a styled tooltip`, re.test(shown), shown);
+  }
+  await A.mouse.move(2, 2); await sleep(200);
+  check('...and it hides when the pointer leaves', (await tipOf()) === '');
+  await A.focus('#btnInvite'); await A.keyboard.press('Tab'); await A.keyboard.press('Shift+Tab'); await sleep(400);
+  check('keyboard focus shows the tooltip too', /invite link/i.test(await tipOf()), await tipOf());
+  await A.evaluate(() => document.activeElement.blur());
+  const touch = await browser.newContext({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 780 } });
+  const tp = await touch.newPage();
+  await tp.goto(ORIGIN + '/');
+  const box = await tp.locator('a.gh').boundingBox();
+  await tp.evaluate(({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    const mk = (type) => new PointerEvent(type, { bubbles: true, cancelable: true, pointerType: 'touch', pointerId: 7, clientX: x, clientY: y, isPrimary: true });
+    el.dispatchEvent(mk('pointerdown'));
+  }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
+  await sleep(800);
+  check('a long press on a touchscreen shows the tooltip', await tp.evaluate(() => document.querySelector('#tip').classList.contains('show') && /GitHub/.test(document.querySelector('#tip').textContent)));
+  await touch.close();
+
+  // --- Someone who leaves disappears from everyone's list at once, with no failure left behind ----------------------------
+  const gA = await open('Gwen'); const gUrl = await create(gA); await join(gA);
+  const gB = await open('Hal', { url: gUrl }); await join(gB);
+  const gC = await open('Ivy', { url: gUrl }); await join(gC);
+  await Promise.all([connectedReady(gA, 2), connectedReady(gB, 2), connectedReady(gC, 2)]);
+  const rosterNames = (pg) => pg.evaluate(() => [...document.querySelectorAll('#roster .rrow .nm')].map((n) => n.textContent));
+  await gC.click('#btnLeave').catch(() => {}); await gC.click('#overlayCard button:has-text("Leave")').catch(() => {});
+  const gone1 = await until(async () => (await peerCount(gA)) === 1 && (await peerCount(gB)) === 1, 5000, 100);
+  check('leave button: the leaver is off the others\' lists within 5 seconds', gone1);
+  const namesAfter = await rosterNames(gA);
+  check('...and the roster holds only you and the one who stayed, with no "couldn\'t reach" row', namesAfter.length === 2 && !namesAfter.some((n) => /Couldn't reach/.test(n)) && !namesAfter.some((n) => /Ivy/.test(n)), namesAfter.join(' | '));
+  await sleep(1500);
+  check('...and it stays that way (the library does not bring the row back)', (await rosterNames(gB)).length === 2 && (await peerCount(gB)) === 1);
+  await gB.close({ runBeforeUnload: false });
+  check('closing a tab: the other person is removed within 5 seconds', await until(async () => (await peerCount(gA)) === 0, 5000, 100));
+  check('...and there is no failure row and no "no answer" for someone who left', (await rosterNames(gA)).length === 1 && !/Couldn't reach/.test(await gA.textContent('#roster')), (await rosterNames(gA)).join(' | '));
+  await sleep(3000);
+  check('...even a few seconds later', !/Couldn't reach/.test(await gA.textContent('#roster')) && (await rosterNames(gA)).length === 1);
+  await Promise.all([gA, gB, gC].map((pg) => pg.context().close().catch(() => {})));
+
   // --- Tooltips on every button, select and summary ------------------------------------------------------------------------
-  const untitled = (pg) => pg.evaluate(() => [...document.querySelectorAll('button, select, summary')].filter((e) => !e.title).map((e) => e.id || e.textContent.trim().slice(0, 24)));
+  const untitled = (pg) => pg.evaluate(() => [...document.querySelectorAll('button, select, summary')].filter((e) => !e.title && !e.dataset.tip).map((e) => e.id || e.textContent.trim().slice(0, 24)));
   await sleep(200);
   check('every button, select and summary in the room has a tooltip', (await untitled(A)).length === 0, (await untitled(A)).join(', '));
   await A.click('#btnDevices'); await A.waitForSelector('#overlayCard'); await sleep(150);
@@ -547,7 +618,7 @@ try {
   check('...and the Move room dialog', (await untitled(A)).length === 0, (await untitled(A)).join(', '));
   await A.click('#overlayCard button:has-text("Cancel")');
   await A.click('#btnReact'); await sleep(150);
-  check('...and the reaction menu (named reactions)', (await untitled(A)).length === 0 && /Thumbs up/.test(await A.getAttribute('#reactMenu button >> nth=0', 'title')));
+  check('...and the reaction menu (named reactions)', (await untitled(A)).length === 0 && /Thumbs up/.test(await A.evaluate(() => { const b = document.querySelector('#reactMenu button'); return b.title || b.dataset.tip; })));
   await A.click('#btnReact');
   const tipCtx = await browser.newContext();
   const tipPage = await tipCtx.newPage();

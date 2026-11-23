@@ -113,6 +113,8 @@
   #chatBar select { flex:1; }
   #chatIn { flex:1; }
   #consoleWrap { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
+  #tip { position:fixed; z-index:200; max-width:260px; padding:6px 10px; background:var(--surface3); color:var(--fg); border:1px solid var(--line); border-radius:6px; font-size:12px; line-height:1.35; pointer-events:none; opacity:0; visibility:hidden; transition:opacity .12s; box-shadow:0 4px 14px rgba(0,0,0,.45); }
+  #tip.show { opacity:1; visibility:visible; }
   #consoleCopy { position:absolute; top:6px; right:14px; z-index:2; width:32px; height:32px; min-height:0; padding:0; display:inline-flex; align-items:center; justify-content:center; opacity:.8; }
   #consoleCopy:hover, #consoleCopy:focus-visible { opacity:1; }
   #consoleCopy.done { color:var(--ok, #3fb950); }
@@ -465,6 +467,7 @@ const ICONS = {
   pin: '<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
   copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   check: '<polyline points="20 6 9 17 4 12"/>',
+  play: '<polygon points="5 3 19 12 5 21 5 3"/>',
   send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
 };
 function svgIcon(name) {
@@ -625,7 +628,7 @@ const inviteUrl = (secret, h = parseHostHash()) => inviteBase + '#k=' + b64u.enc
 const settings = (() => {
   let s = {};
   try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
-  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', camId: '', micId: '', spkId: '', mirror: true, sounds: true, layout: 'grid', shareLan: true, ...s };
+  return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', camId: '', micId: '', spkId: '', mirror: true, sounds: true, layout: 'grid', shareLan: true, myLan: '', ...s };
 })();
 const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 // ws:// would put the room topic and your IP on the network in plaintext, so it is accepted for loopback only.
@@ -673,14 +676,14 @@ const TIPS = {
   'Back to start': 'Go back to the start screen', 'Move': 'Move to a new room and invite the people you ticked', 'Join the new room': 'Leave this room and join the new one',
   'Start recording': 'Start recording the room on this device. Everyone is told.', 'Use this address': 'Use this address in invite links and the QR code',
   'Send to the room': 'Send your camera or microphone to everyone in the room', 'Disconnect': 'Disconnect from that person. They can still reconnect.',
-  'Ignore': 'Do nothing. The request is dropped.', 'Dismiss': 'Hide this message', 'Allow local connections': 'Ask the browser for microphone access once so it shows this page your local address. Nothing is turned on or sent.',
+  'Ignore': 'Do nothing. The request is dropped.', 'Dismiss': 'Hide this message', 'Allow local connections': 'Choose how to show your local address: ask the browser (a microphone prompt, nothing is turned on or sent) or type it',
   'Stop camera': 'Turn your camera off', 'Stop sharing': 'Stop sharing your screen', 'Test microphone': 'Show a level meter for the chosen microphone (nothing is sent)',
   'Stop test': 'Stop the microphone test and release the microphone', 'Play test sound': 'Play a short sound on the chosen speaker',
 };
 const tipFor = (label) => TIPS[label] || label;
 function ensureTitles() {
   document.querySelectorAll('button, select, summary').forEach((e) => {
-    if (e.title) return;
+    if (e.title || e.dataset.tip) return;
     const t = e.getAttribute('aria-label') || e.textContent.trim();
     if (t) e.title = tipFor(t);
   });
@@ -740,18 +743,20 @@ async function copyConsole() {
 const allPCs = new Set();
 const failures = [];
 const seenFailures = new WeakSet();
+const leftPcs = new WeakSet(); // connections to people who have left: their failure is not news
 
 // Browsers replace a device's local address with a random name ending in .local, and another device on the
 // same network often cannot resolve it (or the router blocks it). When we know our own local address, put it
 // back in the candidates we send, so same-network connections work without mDNS. Public addresses and
 // everything else are untouched. Anyone in the room already sees your public address; this adds the private one.
 let lanIp = null;
-let lanSource = null; // 'manual' | 'server' | 'probe'
+let lanSource = null; // 'typed' | 'manual' | 'server' | 'probe'
 const MDNS_HOST = /( \d+ (?:udp|tcp) \d+ )(\S+\.local)( \d+ typ host)/gi;
 const unhideSdp = (text) => (lanIp ? String(text).replace(MDNS_HOST, `$1${lanIp}$3`) : text);
 // Where our own local address can come from: one you typed (on this machine), the server's /whoami (only
 // when it can be sure), or the browser itself (only once it has been allowed camera or microphone access).
 async function findOwnLan() {
+  if (usablePrivate(settings.myLan || '')) { lanSource = 'typed'; return settings.myLan; }
   const manual = isLoopbackHost(location.hostname) ? (settings.inviteHost || '').replace(/^https?:\/\//, '').split(':')[0] : '';
   if (usablePrivate(manual)) { lanSource = 'manual'; return manual; }
   if (SERVED_BY_SERVER) {
@@ -776,6 +781,33 @@ async function resolveOwnLan(force = false) {
   return lanIp;
 }
 let lanResolved = false;
+
+// The dialog behind every "Allow local connections" button. Asking the browser means a microphone prompt, which is
+// surprising for something that sounds like networking, so it says so first and offers typing the address instead.
+function chooseLocalAddress() {
+  const input = el('input', { type: 'text', placeholder: '192.168.0.12', autocomplete: 'off', autocapitalize: 'off', inputmode: 'decimal', enterkeyhint: 'done', 'aria-label': 'This device\'s local address' });
+  input.value = settings.myLan || '';
+  const note = el('p', { class: 'dim', text: '' });
+  const apply = async () => {
+    const v = input.value.trim();
+    if (v && !usablePrivate(v)) { input.style.borderColor = 'var(--bad)'; note.textContent = 'That is not a local address. It should look like 192.168.x.x, 10.x.x.x or 172.16-31.x.x.'; return; }
+    settings.myLan = v; saveSettings();
+    await resolveOwnLan(true);
+    hideScreen();
+    log(v ? `Using the local address you typed (${v}). It is shared with people in the room so devices on the same network can connect.` : 'Cleared the typed address.');
+    scheduleRender();
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') apply(); });
+  const ff = /Firefox\//.test(navigator.userAgent || '');
+  const body = [
+    'Browsers hide this device\'s local address until a page is allowed the microphone or camera. Devices on the same Wi-Fi need that address to connect to you directly. Two ways to give it:',
+    '1. Ask the browser: you will see a microphone prompt. Nothing is turned on, recorded or sent, and the microphone is released straight away.',
+    '2. Type this device\'s address yourself (in Wi-Fi settings, or ipconfig / ifconfig). No permission prompt. It is kept on this device and shared only with people in this room.',
+  ];
+  if (ff) body.push('Firefox: the microphone prompt can be dismissed or blocked without you noticing, and Firefox may keep hiding the address afterwards. Typing the address is the more dependable option there.');
+  const node = el('div', {}, input, el('div', { style: 'margin-top:8px' }, el('button', { class: 'primary', text: 'Use this address', title: 'Share the address you typed instead of asking the browser', onclick: apply })), note);
+  showScreen({ title: 'Let devices on your network reach you', body, node, actions: [{ label: 'Ask the browser (microphone prompt)', cls: '', title: 'Shows the browser\'s microphone prompt once. Nothing is turned on or sent.', fn: allowLocalConnections }, { label: 'Cancel' }] });
+}
 
 // One click that does what turning on the microphone would do for this purpose, without turning anything on:
 // ask for access (the browser then reveals the local address), read it, and release the device at once.
@@ -986,7 +1018,7 @@ function diagnose(local, remote, ctx = {}) {
   const myPriv = hosts(L).some((c) => c.addrClass === 'private');
   const theirPriv = hosts(R).some((c) => c.addrClass === 'private');
   if (!L.length || !R.length) return { code: 'NO_CANDIDATES', text: 'One side offered no connection candidates at all (a browser or privacy setting, a VPN, or a very restrictive network).' };
-  if (myMdns) return { code: 'MY_MDNS', text: `Your browser hides your local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Press "Allow local connections": the browser asks for microphone access (nothing is turned on or sent), then lets this page see your local address and share it${ctx.shareLan === false ? ' (sharing is off in Network settings, so turn it on first)' : ''}. The connection then retries by itself.` };
+  if (myMdns) return { code: 'MY_MDNS', text: `Your browser hides your local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Press "Allow local connections" and either let the browser ask for microphone access (nothing is turned on or sent) or type your local address; either way this page can then share it${ctx.shareLan === false ? ' (sharing is off in Network settings, so turn it on first)' : ''}. The connection then retries by itself.` };
   if (!hosts(R).length) return { code: 'NO_REMOTE_HOST', text: "Their device offered no local address at all, so a same-network connection isn't possible from their side." };
   if (theirMdns && !theirPriv) return { code: 'THEIR_MDNS', text: 'Their browser hides their local address behind a .local name. They need to press "Allow local connections" on their side (their page shows the button once it notices).' };
   if (myPriv && theirPriv) return { code: 'BOTH_PRIVATE_BLOCKED', text: 'Both devices offered their local addresses, but nothing got through. This network may keep devices apart (guest Wi-Fi, client isolation), or a firewall on one device is blocking incoming connections. Use cellular, turn the firewall off, or add a TURN server.' };
@@ -1012,7 +1044,7 @@ function classifyFailure(pc) {
 const failureWho = (f) => (!f.peerId ? 'a peer' : S.peers.get(f.peerId)?.name ? displayName(f.peerId) : `a peer (${short(f.peerId)})`);
 
 function noteFailure(pc, peerId) {
-  if (seenFailures.has(pc)) return;
+  if (seenFailures.has(pc) || leftPcs.has(pc)) return;
   seenFailures.add(pc);
   const reason = classifyFailure(pc);
   const known = peerId || peerIdForPc(pc);
@@ -1052,7 +1084,7 @@ function peerIdForPc(pc) {
 // ---------------------------------------------------------------------------
 const S = {
   secret: null, lib: null, room: null, selfId: null, roomId: null,
-  joinedAt: 0, joinStart: 0, peers: new Map(),
+  joinedAt: 0, joinStart: 0, peers: new Map(), gone: new Set(),
   my: { cam: null, mic: null, screen: null },
   sent: { cam: new Map(), mic: new Map(), screen: new Map() },
   draft: { cam: null, mic: null },
@@ -1196,7 +1228,8 @@ async function joinFlow() {
   const chat = S.room.makeAction('chat');
   const rec = S.room.makeAction('rec');
   const react = S.room.makeAction('react');
-  S.actions = { hello, state, ctl, chat, rec, react };
+  const bye = S.room.makeAction('bye');
+  S.actions = { hello, state, ctl, chat, rec, react, bye };
 
   hello.onMessage((m, ctx) => onHello(ctx.peerId, m));
   state.onMessage((m, ctx) => onState(ctx.peerId, m));
@@ -1204,6 +1237,7 @@ async function joinFlow() {
   chat.onMessage((m, ctx) => onChat(ctx.peerId, m));
   rec.onMessage((m, ctx) => onRec(ctx.peerId, m));
   react.onMessage((m, ctx) => onReact(ctx.peerId, m));
+  bye.onMessage((m, ctx) => onBye(ctx.peerId));
 
   S.room.onPeerJoin(({ peerId }) => onPeerJoin(peerId));
   S.room.onPeerLeave(({ peerId }) => onPeerLeave(peerId));
@@ -1256,9 +1290,28 @@ function onPeerJoin(peerId) {
   scheduleRender();
 }
 
+// A person who says goodbye is removed at once, instead of waiting for the connection to time out (5 to 30 seconds,
+// longer on a phone that dropped off the network).
+function onBye(peerId) {
+  if (!S.peers.has(peerId)) return;
+  const pc = S.room?.getPeers()[peerId]?.connection;
+  S.gone.add(peerId);
+  onPeerLeave(peerId);
+  if (pc) { leftPcs.add(pc); try { pc.close(); } catch {} }
+}
+function sendBye() {
+  try { return S.actions.bye?.send({}).catch(() => {}); } catch { /* not joined */ }
+}
+
 function onPeerLeave(peerId) {
   const p = S.peers.get(peerId);
   if (!p) return;
+  const gonePc = S.room?.getPeers()[peerId]?.connection;
+  if (gonePc) leftPcs.add(gonePc);
+  // Nothing about someone who has left is still true: drop their failure rows and the stale "someone is announcing" signal.
+  for (let i = failures.length - 1; i >= 0; i--) if (failures[i].peerId === peerId || (gonePc && failures[i].pc === gonePc)) failures.splice(i, 1);
+  S.seenKeys.clear();
+  S.othersSince = null;
   log(`${displayName(peerId)} left.`);
   for (const kind of Object.keys(S.sent)) S.sent[kind].delete(peerId);
   unwatchLevel(peerId);
@@ -1705,6 +1758,7 @@ function rosterRows() {
   const rows = [];
   const seenPcs = new Set();
   for (const [id, info] of Object.entries(peerInfo)) {
+    if (S.gone.has(id)) continue;
     const p = S.peers.get(id) || { id, name: '', hello: false, state: {} };
     seenPcs.add(info.connection);
     rows.push({ id, p, pc: info.connection, orphan: false });
@@ -1876,9 +1930,9 @@ function renderStatus() {
     msgs.push({ cls: 'warn', text: `${displayName(rq.from)} (unverified name) asked you to disconnect ${displayName(rq.target)}. You can ignore this.`, actions: [
       { label: 'Disconnect', fn: () => resolveRequest(rq, true) }, { label: 'Ignore', fn: () => resolveRequest(rq, false) }] });
   }
-  if (S.allowLocalAsk) msgs.push({ cls: 'warn', text: `${S.allowLocalAsk} can't reach you because your browser hides your local address.`, actions: [{ label: 'Allow local connections', fn: () => { S.allowLocalAsk = null; allowLocalConnections(); } }, { label: 'Dismiss', fn: () => { S.allowLocalAsk = null; scheduleRender(); } }] });
+  if (S.allowLocalAsk) msgs.push({ cls: 'warn', text: `${S.allowLocalAsk} can't reach you because your browser hides your local address.`, actions: [{ label: 'Allow local connections', fn: () => { S.allowLocalAsk = null; chooseLocalAddress(); } }, { label: 'Dismiss', fn: () => { S.allowLocalAsk = null; scheduleRender(); } }] });
   if (!lanIp && settings.shareLan && (S.lanLost || failures.some((f) => f.code === 'MY_MDNS' && Date.now() - f.at < 5 * 60000))) {
-    msgs.push({ cls: 'warn', text: S.lanLost ? 'Your browser hid your local address again, so devices on the same network may not be able to connect to you.' : 'Your browser is hiding your local address, so devices on the same network cannot connect to you.', actions: [{ label: 'Allow local connections', fn: allowLocalConnections }] });
+    msgs.push({ cls: 'warn', text: S.lanLost ? 'Your browser hid your local address again, so devices on the same network may not be able to connect to you.' : 'Your browser is hiding your local address, so devices on the same network cannot connect to you.', actions: [{ label: 'Allow local connections', fn: chooseLocalAddress }] });
   }
   if (!navigator.onLine) msgs.push({ cls: 'warn', text: "You're offline. The call picks up again by itself when the network is back." });
   for (const r of rosterRows()) {
@@ -1972,7 +2026,7 @@ function renderRoster() {
     const row = el('div', { class: 'rrow fail' });
     row.append(el('div', { class: 'nm', text: `Couldn't reach ${failureWho(f)} directly${f.count > 1 ? ` (tried ${f.count} times)` : ''}` }));
     row.append(el('div', { class: 'meta', text: `${f.reason}${f.code ? ` [${f.code}]` : ''} · ${Math.round((Date.now() - f.at) / 1000)}s ago · no media is flowing with this peer${f.detail ? '. ' + f.detail : ''}` }));
-    if (f.code === 'MY_MDNS' && !lanIp) row.append(el('button', { text: 'Allow local connections', title: 'Asks the browser for microphone access so it reveals your local address. Nothing is turned on or sent.', onclick: allowLocalConnections }), ' ');
+    if (f.code === 'MY_MDNS' && !lanIp) row.append(el('button', { text: 'Allow local connections', title: 'Choose how to show your local address: ask the browser (a microphone prompt, nothing is turned on) or type it', onclick: chooseLocalAddress }), ' ');
     row.append(el('button', { text: 'Copy diagnostic', title: 'Copies what this failure looked like, with no IP addresses in it', onclick: () => copyDiagnostic(f) }));
     kids.push(row);
   }
@@ -2964,6 +3018,7 @@ async function leave(why) {
   releaseWakeLock();
   stopMicTest();
   try { AUD.ctx?.close(); } catch {}
+  await Promise.race([sendBye(), sleep(400)]);
   try { await S.room?.leave(); } catch {}
   for (const pc of [...allPCs]) { try { pc.close(); } catch {} }
   if (why === 'new') { history.replaceState(null, '', location.pathname + location.search); location.reload(); return; }
@@ -2981,7 +3036,7 @@ async function leave(why) {
   showScreen({ title: why === 'full' ? `This room is full (${audioCap} people)` : 'You left the room', body, actions: [{ label: 'Back to start', fn: () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); } }] });
 }
 
-addEventListener('pagehide', () => { try { stopAllTracks(); } catch {} });
+addEventListener('pagehide', (e) => { if (!e.persisted) sendBye(); try { stopAllTracks(); } catch {} });
 addEventListener('beforeunload', (e) => { if (REC.on) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------------------------------------------------------------------------
@@ -3069,6 +3124,7 @@ const COMMANDS = {
       '/lan on|off       LAN only (no STUN) — applies on next join',
       '/shareaddr on|off share your local network address so same-network devices connect (default on)',
       '/diag [peer]      copy what the latest failed connection looked like (no IP addresses in it)',
+      '/myaddr [ip|off]  type your local address instead of allowing the microphone (no prompt)',
       '/localfix         ask for microphone access once, only so the browser reveals your local address (nothing is turned on)',
       '/turn <url> [user] [credential] | /turn off   your own TURN — applies on next join',
       '/relays           introduction servers: probe result and room socket for each',
@@ -3171,6 +3227,17 @@ const COMMANDS = {
     log(`Invite links now use ${inviteBase}`);
   },
   localfix() { return allowLocalConnections(); },
+  async myaddr(args) {
+    const v = (args[0] || '').trim();
+    if (!v) { log(settings.myLan ? `Typed local address: ${settings.myLan}. Use /myaddr off to clear it.` : 'No typed local address. Use /myaddr 192.168.x.x to set one.'); return; }
+    if (v === 'off') settings.myLan = '';
+    else if (usablePrivate(v)) settings.myLan = v;
+    else { log('That is not a usable local address (192.168.x.x, 10.x.x.x or 172.16-31.x.x).', 'err'); return; }
+    saveSettings();
+    await resolveOwnLan(true);
+    log(lanIp ? `Sharing local address ${lanIp}.` : 'No local address is being shared.');
+    scheduleRender();
+  },
   async diag(args) {
     const recent = failures.filter((f) => Date.now() - f.at < 5 * 60000);
     const f = (args[0] ? recent.find((x) => x.peerId && x.peerId.startsWith(args[0])) : null) || recent[recent.length - 1];
@@ -3413,7 +3480,7 @@ function submitConsole() {
   i.focus();
 }
 $('#consoleIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitConsole(); });
-$('#consoleRun').prepend(svgIcon('send'));
+$('#consoleRun').prepend(svgIcon('play'));
 $('#consoleCopy').append(svgIcon('copy'));
 $('#consoleCopy').onmousedown = (e) => e.preventDefault(); // keep the text selection
 $('#consoleCopy').onclick = copyConsole;
@@ -3441,6 +3508,57 @@ $('#btnInstall').onclick = async () => {
 };
 const syncOffline = () => $('#offlineNote').classList.toggle('hidden', navigator.onLine);
 addEventListener('online', syncOffline); addEventListener('offline', syncOffline); syncOffline();
+
+// Styled tooltips. A native title appears after a long delay, never on a phone, and cannot be styled, so the text of
+// each title is shown in a bubble instead: on mouse hover, on keyboard focus, and on a long press on a touchscreen.
+// The title attribute is moved to data-tip while the bubble is in use so the browser's own tooltip does not double it.
+const tipEl = el('div', { id: 'tip', role: 'tooltip' });
+document.body.append(tipEl);
+let tipTimer = null, tipFor_ = null, swallowClick = 0;
+const tipTarget = (n) => (n instanceof Element ? n.closest('[title], [data-tip]') : null);
+function tipText(t) {
+  const title = t.getAttribute('title');
+  if (title) {
+    if (!t.getAttribute('aria-label') && !t.textContent.trim()) t.setAttribute('aria-label', title);
+    t.dataset.tip = title; t.removeAttribute('title');
+  }
+  return t.dataset.tip || '';
+}
+function hideTip() { clearTimeout(tipTimer); tipFor_ = null; tipEl.classList.remove('show'); }
+function showTip(t) {
+  const text = tipText(t);
+  if (!text) return;
+  tipFor_ = t;
+  tipEl.textContent = text;
+  tipEl.classList.add('show');
+  const r = t.getBoundingClientRect(), w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  const left = Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2));
+  const top = r.bottom + 8 + h <= innerHeight ? r.bottom + 8 : Math.max(6, r.top - h - 8);
+  tipEl.style.left = left + 'px'; tipEl.style.top = top + 'px';
+}
+const armTip = (t, ms) => { clearTimeout(tipTimer); tipTimer = setTimeout(() => showTip(t), ms); };
+document.addEventListener('pointerover', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const t = tipTarget(e.target);
+  if (t && t !== tipFor_) { hideTip(); armTip(t, 350); } else if (!t) hideTip();
+});
+document.addEventListener('pointerout', (e) => { if (e.pointerType === 'mouse' && tipTarget(e.target) && !tipTarget(e.relatedTarget)) hideTip(); });
+document.addEventListener('focusin', (e) => { if (e.target.matches?.(':focus-visible')) { const t = tipTarget(e.target); if (t) armTip(t, 200); } });
+document.addEventListener('focusout', hideTip);
+document.addEventListener('pointerdown', (e) => {
+  hideTip();
+  if (e.pointerType === 'mouse') return;
+  const t = tipTarget(e.target);
+  if (t) { tipTimer = setTimeout(() => { showTip(t); swallowClick = Date.now() + 5000; setTimeout(hideTip, 2500); }, 500); }
+}, true);
+const cancelPendingTip = () => { if (!tipFor_) clearTimeout(tipTimer); };
+document.addEventListener('pointerup', (e) => { if (e.pointerType !== 'mouse') cancelPendingTip(); }, true);
+document.addEventListener('pointercancel', cancelPendingTip, true);
+addEventListener('scroll', hideTip, true);
+// A long press that showed a tip must not also press the button.
+document.addEventListener('click', (e) => { if (swallowClick > Date.now()) { swallowClick = 0; e.preventDefault(); e.stopPropagation(); } else swallowClick = 0; }, true);
+addEventListener('keydown', (e) => { if (e.key === 'Escape') hideTip(); });
+addEventListener('blur', hideTip);
 
 ensureTitles();
 new MutationObserver(() => ensureTitles()).observe(document.body, { childList: true, subtree: true });
