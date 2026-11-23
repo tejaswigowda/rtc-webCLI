@@ -871,23 +871,18 @@ async function buildDiagnostic(f) {
   const b = browserInfo();
   let mic = 'unsupported';
   try { mic = (await navigator.permissions.query({ name: 'microphone' })).state; } catch {}
-  const pairs = { failed: 0, succeeded: 0, 'in-progress': 0, waiting: 0, frozen: 0 };
-  let selected = null;
   const pc = f.pc;
-  if (pc && !pcClosed(pc)) {
-    try {
-      const rep = await pc.getStats();
-      const by = new Map();
-      rep.forEach((r) => by.set(r.id, r));
-      rep.forEach((r) => {
-        if (r.type === 'candidate-pair') pairs[r.state] = (pairs[r.state] || 0) + 1;
-        if (r.type === 'transport' && r.selectedCandidatePairId) {
-          const pr = by.get(r.selectedCandidatePairId);
-          const lc = by.get(pr?.localCandidateId), rc = by.get(pr?.remoteCandidateId);
-          if (lc && rc) selected = { local: lc.candidateType, remote: rc.candidateType };
-        }
-      });
-    } catch { /* connection already closed */ }
+  let snap = f.snapshot || pc?._snap || null;
+  // Only read live if nothing was captured at failure and the connection is still open.
+  if (!snap && pc && !pcClosed(pc)) { try { snap = await snapshotPairs(pc); } catch { /* closed meanwhile */ } }
+  let pairs = pc ? 'unavailable (connection closed before stats were read)' : 'unavailable (no connection attempt to inspect)';
+  let selected = null;
+  if (snap) {
+    const byState = {};
+    for (const x of snap.pairs) byState[x.state] = (byState[x.state] || 0) + 1;
+    const sel = snap.pairs.find((x) => x.selected);
+    if (sel) selected = { local: sel.local?.type, remote: sel.remote?.type };
+    pairs = { statsTakenAtMs: snap.statsTakenAtMs, byState, pairs: snap.pairs };
   }
   return {
     app: { version: VERSION, protocol: PROTOCOL },
@@ -902,7 +897,7 @@ async function buildDiagnostic(f) {
     candidatePairs: pairs,
     selectedPair: selected,
     iceTransitions: f.trans || [],
-    restartIce: { ran: false },
+    restartIce: { ran: !!pc?._restart?.count, count: pc?._restart?.count || 0, lastAtMs: pc?._restart?.lastAtMs ?? null },
   };
 }
 
@@ -939,9 +934,11 @@ class TrackedPC extends RTCPeerConnection {
     this._localList = [];
     this._remoteList = [];
     this._trans = [];
+    this._restart = { count: 0, lastAtMs: null };
+    this._snap = null; this._snapBusy = null;
     allPCs.add(this);
     const mark = (kind, state) => { if (this._trans.length < 30) this._trans.push({ kind, state, ms: Date.now() - this._born }); };
-    this.addEventListener('iceconnectionstatechange', () => mark('ice', this.iceConnectionState));
+    this.addEventListener('iceconnectionstatechange', () => { mark('ice', this.iceConnectionState); if (this.iceConnectionState === 'failed') captureSnap(this, true); });
     this.addEventListener('connectionstatechange', () => mark('connection', this.connectionState));
     this.addEventListener('icecandidate', (e) => { if (e.candidate && e.candidate.candidate) this._localList.push(e.candidate.candidate); });
     this.addEventListener('connectionstatechange', () => {
@@ -972,6 +969,10 @@ class TrackedPC extends RTCPeerConnection {
     if (this._remoteAt == null) this._remoteAt = Date.now();
     return super.setRemoteDescription(desc, ...rest);
   }
+  restartIce() {
+    this._restart.count++; this._restart.lastAtMs = Date.now() - this._born;
+    return super.restartIce();
+  }
   addIceCandidate(c, ...rest) {
     if (c && c.candidate) this._remoteList.push(c.candidate);
     return super.addIceCandidate(c, ...rest);
@@ -985,16 +986,57 @@ class TrackedPC extends RTCPeerConnection {
 
 // Candidate lines reduced to {type, protocol, addrClass}. No address ever leaves this function, so nothing derived
 // from it (the diagnostic, the failure text) can contain an IP address.
+function classifyAddr(type, addr) {
+  if (type === 'relay') return 'relay';
+  if (!addr) return 'unknown';
+  if (addr.endsWith('.local')) return 'mdns';
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(addr) || /^(fe80|fc|fd)/i.test(addr)) return 'private';
+  return 'public';
+}
 function candClass(line) {
   const f = String(line).replace(/^a=/, '').split(' ');
   const type = /\btyp (\w+)/.exec(line)?.[1] || 'unknown';
-  const addr = f[4] || '';
-  let addrClass;
-  if (type === 'relay') addrClass = 'relay';
-  else if (addr.endsWith('.local')) addrClass = 'mdns';
-  else if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.)/.test(addr) || /^(fe80|fc|fd)/i.test(addr)) addrClass = 'private';
-  else addrClass = 'public';
-  return { type, protocol: (f[2] || '').toLowerCase(), addrClass };
+  return { type, protocol: (f[2] || '').toLowerCase(), addrClass: classifyAddr(type, f[4] || '') };
+}
+
+// What the connectivity checks did, read from getStats() while the connection is still open. The library closes a
+// failed connection soon after, and a closed one cannot be asked, so this is taken at failure and kept. Only candidate
+// types and address classes are kept, never an address.
+async function snapshotPairs(pc) {
+  const rep = await pc.getStats();
+  const by = new Map();
+  let selectedId = null;
+  rep.forEach((r) => { by.set(r.id, r); if (r.type === 'transport' && r.selectedCandidatePairId) selectedId = r.selectedCandidatePairId; });
+  const cls = (c) => (c ? { type: c.candidateType || 'unknown', protocol: String(c.protocol || '').toLowerCase(), addrClass: classifyAddr(c.candidateType, c.address ?? c.ip ?? '') } : null);
+  const num = (v) => (typeof v === 'number' ? v : null);
+  const pairs = [];
+  rep.forEach((r) => {
+    if (r.type !== 'candidate-pair' || pairs.length >= 40) return;
+    pairs.push({
+      state: r.state, selected: r.id === selectedId, nominated: !!r.nominated,
+      local: cls(by.get(r.localCandidateId)), remote: cls(by.get(r.remoteCandidateId)),
+      requestsSent: num(r.requestsSent), requestsReceived: num(r.requestsReceived),
+      responsesSent: num(r.responsesSent), responsesReceived: num(r.responsesReceived),
+      bytesSent: num(r.bytesSent), bytesReceived: num(r.bytesReceived),
+    });
+  });
+  return { statsTakenAtMs: Date.now() - pc._born, iceState: pc.iceConnectionState, pairs };
+}
+// Starts reading the stats now (synchronously, before anything can close the connection) and returns the promise.
+function captureSnap(pc, refresh = false) {
+  if (pcClosed(pc)) return Promise.resolve(pc._snap);
+  if (pc._snapBusy && !refresh) return pc._snapBusy;
+  const run = snapshotPairs(pc).then((snap) => {
+    // Chrome drops its candidate pairs the moment ICE fails, so a read at that moment is empty. An empty read taken after
+    // that proves nothing; keep the last read from while the checks were running.
+    if (!snap.pairs.length && ['failed', 'disconnected', 'closed'].includes(snap.iceState)) return pc._snap;
+    if (!snap.pairs.length && pc._snap?.pairs.length) return pc._snap;
+    pc._snap = snap;
+    for (const f of failures) if (f.pc === pc) { f.snapshot = snap; refreshFailureText(f); }
+    return snap;
+  }).catch(() => pc._snap);
+  pc._snapBusy = run;
+  return run;
 }
 
 function summarizeClasses(list, lanKnown = false) {
@@ -1021,15 +1063,32 @@ function diagnose(local, remote, ctx = {}) {
   if (myMdns) return { code: 'MY_MDNS', text: `Your browser hides your local address behind a .local name, which other devices (and other browsers on one computer) often cannot resolve. Press "Allow local connections" and either let the browser ask for microphone access (nothing is turned on or sent) or type your local address; either way this page can then share it${ctx.shareLan === false ? ' (sharing is off in Network settings, so turn it on first)' : ''}. The connection then retries by itself.` };
   if (!hosts(R).length) return { code: 'NO_REMOTE_HOST', text: "Their device offered no local address at all, so a same-network connection isn't possible from their side." };
   if (theirMdns && !theirPriv) return { code: 'THEIR_MDNS', text: 'Their browser hides their local address behind a .local name. They need to press "Allow local connections" on their side (their page shows the button once it notices).' };
-  if (myPriv && theirPriv) return { code: 'BOTH_PRIVATE_BLOCKED', text: 'Both devices offered their local addresses, but nothing got through. This network may keep devices apart (guest Wi-Fi, client isolation), or a firewall on one device is blocking incoming connections. Use cellular, turn the firewall off, or add a TURN server.' };
+  if (myPriv && theirPriv) {
+    const snap = ctx.snapshot;
+    const privLocal = (c) => c && c.type === 'host' && (c.addrClass === 'private' || (lanKnown && (c.addrClass === 'mdns' || c.addrClass === 'unknown')));
+    const privRemote = (c) => c && c.type === 'host' && c.addrClass === 'private';
+    const local = snap?.pairs?.filter((x) => privLocal(x.local) && privRemote(x.remote)) || [];
+    const counted = local.filter((x) => x.requestsSent != null && x.responsesReceived != null);
+    if (snap && !snap.pairs.length || snap && snap.pairs.length && !local.length) {
+      return { code: 'CHECKS_NEVER_RAN', text: 'Both addresses were exchanged but never tested. This is likely a software problem, not your network. Please send the diagnostic.' };
+    }
+    if (snap && local.length && counted.length === local.length) {
+      if (local.every((x) => x.requestsSent === 0)) return { code: 'CHECKS_NEVER_RAN', text: 'Both addresses were exchanged but never tested. This is likely a software problem, not your network. Please send the diagnostic.' };
+      if (local.some((x) => x.requestsSent > 0) && local.every((x) => x.responsesReceived === 0)) {
+        return { code: 'LOCAL_CHECKS_UNANSWERED', text: 'Your device sent connection checks to theirs on this network and got no reply. The network (or a firewall or VPN on one device) is keeping the devices apart. A page cannot fix this: use cellular, a different network, or a TURN server. To confirm: if a phone on cellular connects but on this Wi-Fi it does not, the Wi-Fi is keeping devices apart (README: "Known limitation").' };
+      }
+      return { code: 'UNKNOWN', text: 'Some connection checks on this network were answered, but the connection still failed. Use "Copy diagnostic" and send it along.' };
+    }
+    return { code: 'BOTH_PRIVATE_BLOCKED', text: 'Both devices offered their local addresses, but nothing got through. This network may keep devices apart (guest Wi-Fi, client isolation), or a firewall on one device is blocking incoming connections. Use cellular, turn the firewall off, or add a TURN server (the checks could not be inspected).' };
+  }
   if (ctx.lan) return { code: 'LAN_ONLY', text: 'LAN only is on, so the STUN server is not used: only people on the same network can connect.' };
   if (theirPriv && !myPriv) return { code: 'DIFFERENT_NETWORKS', text: 'They offered a local-network address and you offered none on the same network, so you are probably on different networks. A TURN server is the fix for different networks.' };
   return { code: 'UNKNOWN', text: 'We could not tell why this failed. Use "Copy diagnostic" and send it along.' };
 }
 
-function failureDetail(pc) {
+function failureDetail(pc, snapshot = pc._snap) {
   const local = pc._localList.map(candClass), remote = pc.remoteCandidates().map(candClass);
-  const d = diagnose(local, remote, { lanKnown: !!lanIp, lan: settings.lan, shareLan: settings.shareLan });
+  const d = diagnose(local, remote, { lanKnown: !!lanIp, lan: settings.lan, shareLan: settings.shareLan, snapshot });
   const head = `you offered ${summarizeClasses(local, !!lanIp)}${lanIp ? ' (your local address is shared in place of the .local name)' : ''}; they offered ${summarizeClasses(remote)}`;
   return { code: d.code, local, remote, text: `${head}. ${d.text}${settings.lan && d.code !== 'LAN_ONLY' ? ' LAN only is on, so no STUN: only people on the same network can connect.' : ''}` };
 }
@@ -1043,17 +1102,27 @@ function classifyFailure(pc) {
 // A peer that never finished connecting has no name, only an id.
 const failureWho = (f) => (!f.peerId ? 'a peer' : S.peers.get(f.peerId)?.name ? displayName(f.peerId) : `a peer (${short(f.peerId)})`);
 
-function noteFailure(pc, peerId) {
+function refreshFailureText(f) {
+  if (!f.pc) return;
+  const d = failureDetail(f.pc, f.snapshot);
+  f.detail = d.text; f.code = d.code;
+  scheduleRender();
+}
+
+async function noteFailure(pc, peerId) {
   if (seenFailures.has(pc) || leftPcs.has(pc)) return;
   seenFailures.add(pc);
   const reason = classifyFailure(pc);
   const known = peerId || peerIdForPc(pc);
+  // The stats are requested now, while the connection is open; the library closes a failed one right after this.
+  await Promise.race([captureSnap(pc), sleep(1500)]);
+  if (leftPcs.has(pc)) return;
   const d = failureDetail(pc);
   const detail = d.text;
   // The library retries every few seconds, so the same failure repeats. Count it instead of listing it again.
   const again = failures.find((f) => f.reason === reason && f.detail === detail && f.peerId === (known || null));
-  if (again) { again.count = (again.count || 1) + 1; again.at = Date.now(); again.pc = pc; again.trans = pc._trans; scheduleRender(); return; }
-  const entry = { pc, at: Date.now(), reason, detail, code: d.code, local: d.local, remote: d.remote, trans: pc._trans, peerId: known || null };
+  if (again) { again.count = (again.count || 1) + 1; again.at = Date.now(); again.pc = pc; again.trans = pc._trans; again.snapshot = pc._snap; scheduleRender(); return; }
+  const entry = { pc, at: Date.now(), reason, detail, code: d.code, local: d.local, remote: d.remote, trans: pc._trans, peerId: known || null, snapshot: pc._snap };
   // The library's own error for the same attempt may already be listed (it knows the id, not the cause).
   const sibling = failures.find((f) => !f.pc && Date.now() - f.at < 30000);
   if (sibling) Object.assign(sibling, entry, { peerId: sibling.peerId || known || null });
@@ -1068,6 +1137,11 @@ function noteFailure(pc, peerId) {
 function watchConnectTimeouts() {
   const now = Date.now();
   for (const pc of allPCs) {
+    // Keep a recent read of the checks while they run: the evidence is gone once the connection has failed.
+    if (pc.remoteDescription && !pcClosed(pc) && ['new', 'connecting'].includes(pc.connectionState) && !seenFailures.has(pc) && now - (pc._sampledAt || 0) > 2500) {
+      pc._sampledAt = now;
+      captureSnap(pc, true);
+    }
     if (pc._remoteAt != null && !seenFailures.has(pc) && pc.connectionState !== 'connected'
         && pc.connectionState !== 'closed' && now - pc._remoteAt > CONNECT_TIMEOUT_MS) noteFailure(pc);
   }

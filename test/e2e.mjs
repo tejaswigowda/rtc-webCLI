@@ -427,6 +427,23 @@ try {
   if (lanNow) check('both sides typed their address: the pair connects with the microphone never allowed', await until(() => tPages[0].evaluate(() => window.rtc.S.peers.size === 1 && [...window.rtc.S.peers.values()][0].hello), 100000));
   else console.log('SKIP  no private LAN address on this machine for the typed-address connection check');
   await Promise.all(tPages.map((pg) => pg.context().close()));
+  // --- DX1/DX3 end to end: both sides advertise an address nobody answers on --------------------------------------------
+  const uPages = [];
+  const subnet = (lanNow || '192.168.0.1').split('.').slice(0, 3).join('.');
+  for (const [n, bogus] of [['Uma', subnet + '.250'], ['Una', subnet + '.251']]) {
+    const ctx = await maskedStatic.newContext();
+    await ctx.addInitScript(({ relays, n, bogus }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays, myLan: bogus })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n, bogus });
+    const pg = await ctx.newPage();
+    await pg.goto(`http://localhost:${staticSrv.address().port}/docs/#k=${'U'.repeat(22)}`); await join(pg);
+    uPages.push(pg);
+  }
+  const unanswered = await until(() => uPages[0].evaluate(() => window.rtc.failures.some((f) => f.code === 'LOCAL_CHECKS_UNANSWERED')), 120000);
+  check('DX3 end to end: private addresses that never answer are named LOCAL_CHECKS_UNANSWERED', unanswered, await uPages[0].evaluate(() => window.rtc.failures.map((f) => f.code).join()));
+  const ud = await uPages[0].evaluate(async () => { const f = window.rtc.failures.find((x) => x.pc); return JSON.stringify(await window.rtc.buildDiagnostic(f)); });
+  const udj = JSON.parse(ud);
+  check('DX1 the diagnostic carries the snapshot taken at failure: pairs, requests sent, no replies, and when it was taken', typeof udj.candidatePairs === 'object' && typeof udj.candidatePairs.statsTakenAtMs === 'number' && udj.candidatePairs.pairs.some((x) => x.requestsSent > 0 && x.responsesReceived === 0), JSON.stringify(udj.candidatePairs).slice(0, 300));
+  check('DX1 the snapshot holds no IP address', !/\b\d{1,3}(\.\d{1,3}){3}\b/.test(ud.replace(/"(version|major)":"?[\d.]+"?/g, '')), ud.match(/\b\d{1,3}(\.\d{1,3}){3}\b/)?.[0]);
+  await Promise.all(uPages.map((pg) => pg.context().close()));
   await maskedStatic.close(); staticSrv.close();
 
   // --- Guest names: two friendly words, not Guest-XXXX ------------------------------------------------------------
@@ -538,6 +555,43 @@ try {
   check('SW4 each cause maps to its code (MY_MDNS, BOTH_PRIVATE_BLOCKED, NO_REMOTE_HOST, THEIR_MDNS, LAN_ONLY, DIFFERENT_NETWORKS, NO_CANDIDATES, UNKNOWN)',
     dg.mine === 'MY_MDNS' && dg.bothBlocked === 'BOTH_PRIVATE_BLOCKED' && dg.noRemoteHost === 'NO_REMOTE_HOST' && dg.theirs === 'THEIR_MDNS' && dg.lanOnly === 'LAN_ONLY' && dg.different === 'DIFFERENT_NETWORKS' && dg.none === 'NO_CANDIDATES' && dg.unknown === 'UNKNOWN', JSON.stringify(dg));
   check('SW4 candidate classes: mdns, private, public, relay', dg.cls === 'mdns,private,public,relay', dg.cls);
+
+  // --- DX1-DX3: the diagnostic reads the checks, and never reports zeros it did not measure -----------------------------
+  const dx = await A.evaluate(async () => {
+    const c = (type, addrClass) => ({ type, protocol: 'udp', addrClass });
+    const L = [c('host', 'mdns')], R = [c('host', 'private')];
+    const pair = (o) => ({ state: 'failed', selected: false, nominated: false, local: c('host', 'mdns'), remote: c('host', 'private'), requestsSent: 0, requestsReceived: 0, responsesSent: 0, responsesReceived: 0, bytesSent: 0, bytesReceived: 0, ...o });
+    const d = (snapshot) => window.rtc.diagnose(L, R, { lanKnown: true, snapshot });
+    const closed = new window.rtc.TrackedPC({}); closed.close();
+    const none = await window.rtc.buildDiagnostic({ pc: closed, reason: 'x', at: Date.now() });
+    const noPc = await window.rtc.buildDiagnostic({ pc: null, reason: 'x', at: Date.now() });
+    const live = new window.rtc.TrackedPC({}); live.restartIce(); live.restartIce();
+    const re = (await window.rtc.buildDiagnostic({ pc: live, reason: 'x', at: Date.now() })).restartIce;
+    const fresh = (await window.rtc.buildDiagnostic({ pc: new window.rtc.TrackedPC({}), reason: 'x', at: Date.now() })).restartIce;
+    live.close();
+    return {
+      none: d(undefined), unanswered: d({ statsTakenAtMs: 15000, pairs: [pair({ requestsSent: 12 })] }), neverNoPairs: d({ statsTakenAtMs: 1, pairs: [] }),
+      neverNoPrivate: d({ statsTakenAtMs: 1, pairs: [pair({ remote: c('srflx', 'public'), requestsSent: 5 })] }), neverZero: d({ statsTakenAtMs: 1, pairs: [pair({})] }),
+      answered: d({ statsTakenAtMs: 1, pairs: [pair({ requestsSent: 9, responsesReceived: 2 })] }), uncounted: d({ statsTakenAtMs: 1, pairs: [pair({ requestsSent: null, responsesReceived: null })] }),
+      closedPairs: none.candidatePairs, noPcPairs: noPc.candidatePairs, re, fresh,
+    };
+  });
+  check('DX3 private pairs with requests sent and no reply → LOCAL_CHECKS_UNANSWERED, with the no-tools confirmation', dx.unanswered.code === 'LOCAL_CHECKS_UNANSWERED' && /cellular connects but on this Wi-Fi it does not/.test(dx.unanswered.text) && /Known limitation/.test(dx.unanswered.text), dx.unanswered.code);
+  check('DX3 private hosts but no private↔private pair, or none that sent a check → CHECKS_NEVER_RAN', dx.neverNoPairs.code === 'CHECKS_NEVER_RAN' && dx.neverNoPrivate.code === 'CHECKS_NEVER_RAN' && dx.neverZero.code === 'CHECKS_NEVER_RAN' && /software problem/.test(dx.neverZero.text), [dx.neverNoPairs.code, dx.neverNoPrivate.code, dx.neverZero.code].join());
+  check('DX3 no snapshot (or counters the browser did not report) → BOTH_PRIVATE_BLOCKED, "(the checks could not be inspected)"', dx.none.code === 'BOTH_PRIVATE_BLOCKED' && dx.uncounted.code === 'BOTH_PRIVATE_BLOCKED' && /could not be inspected/.test(dx.none.text));
+  check('DX3 checks that were answered but still failed → UNKNOWN, not a network accusation', dx.answered.code === 'UNKNOWN', dx.answered.code);
+  check('DX1 a closed connection with no snapshot reports "unavailable", never zeros', typeof dx.closedPairs === 'string' && /^unavailable \(connection closed before stats were read\)$/.test(dx.closedPairs) && /^unavailable/.test(dx.noPcPairs), String(dx.closedPairs));
+  check('DX2 restartIce is counted per connection, not a constant', dx.re.ran === true && dx.re.count === 2 && typeof dx.re.lastAtMs === 'number' && dx.fresh.ran === false && dx.fresh.count === 0, JSON.stringify(dx.re));
+
+  // --- DX5: stored field diagnostics hold no IP addresses ---------------------------------------------------------------
+  const { readdir, stat } = await import('node:fs/promises');
+  const fieldRoot = path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), 'test/field');
+  const jsonFiles = [];
+  const walk = async (dir) => { for (const n of await readdir(dir)) { const f = path.join(dir, n); if ((await stat(f)).isDirectory()) await walk(f); else if (n.endsWith('.json')) jsonFiles.push(f); } };
+  await walk(fieldRoot);
+  const withIp = [];
+  for (const f of jsonFiles) if (/\b\d{1,3}(\.\d{1,3}){3}\b/.test((await readFile(f, 'utf8')).replace(/"(version|major)":\s*"?[\d.]+"?/g, ''))) withIp.push(path.relative(fieldRoot, f));
+  check(`DX5 no IP address in any stored field diagnostic (${jsonFiles.length} files)`, withIp.length === 0, withIp.join(', '));
 
   // --- Run button: the console and chat can be used without an Enter key -----------------------------------------
   await A.click('#tabConsole');
