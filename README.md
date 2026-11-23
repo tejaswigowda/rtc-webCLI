@@ -12,7 +12,7 @@ A browser-based room for audio, video and screen share, opened with an invite li
 
 **Read more, with diagrams: [the About page](docs/about/index.html)** (served at `/about/`).
 
-**Status: v0.3.0 (protocol 3): not yet run on real devices. On v0.2.0 (2026-11-21): two runs pass, one fails. Same Wi-Fi, on one home network: iPhone (Safari) ↔ Mac (Chrome) connected (2026-11-22, build not recorded); Android (Chrome) ↔ Mac did not, and is under investigation** (see the [RT22 matrix](#tests-and-gates)). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
+**Status: v0.3.0 (protocol 3): not yet run on real devices. On v0.2.0 (2026-11-21): two runs pass, one fails. Same Wi-Fi, on one home network: iPhone (Safari) ↔ Mac (Chrome) connected (2026-11-22, build not recorded); Android (Chrome) ↔ Mac did not, because **that phone cannot reach the Mac on that network at all** (a plain web page by IP address also fails). That is a network limitation, not an app fault; see [Known limitation](#known-limitation-networks-that-keep-devices-apart)** and the [RT22 matrix](#tests-and-gates). Checks that code can make are automated (`npm test`), but they run against a **mock relay** with fake cameras, not against the real public relays or real networks. The cap measurement and most of the device matrix are open, and listed under [Tests and Gates](#tests-and-gates) rather than hidden.
 
 ---
 
@@ -113,7 +113,7 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 |---|---|
 | **A quick call with a few people** | Make a room, send the link. No account, nothing to install |
 | **You want your media off someone else's servers** | Audio, video and screen go between the participants. No media server of ours exists |
-| **A workshop or session on a known network** | **Not yet working in testing.** Phone and laptop on the same home Wi-Fi did not connect (2026-11-21); the cause is not diagnosed. Over the open internet the same pair connected. Until this is fixed, phones can use cellular. LAN-only mode is untested across devices |
+| **A workshop or session on a known network** | **Only if that network lets devices reach each other.** Many guest, venue and some home networks do not, and then no peer-to-peer tool can connect without a relay, which this one does not provide. In testing, an iPhone and a Mac connected on one home Wi-Fi, and an Android phone on the same Wi-Fi could not reach the Mac at all. Test the network first, or have phones use cellular. See [Known limitation](#known-limitation-networks-that-keep-devices-apart) |
 
 **The tradeoff:** every person uploads their video once per other person, so rooms stay small, and anything larger needs a server that relays media, which this tool deliberately has none of. There is no host who can lock or remove anyone: anyone with the link is a peer. The room creator can be proved and is the only one offered recording, but that does not give them lock or remove powers. Rooms exist only while someone is in them.
 
@@ -263,11 +263,31 @@ When the page is opened on `localhost`, **Copy invite** and **QR** use the https
 
 Camera, microphone, screen capture and the cryptography need `https://` or `http://localhost`. Over plain `http://<LAN IP>` the page explains this instead of failing with a permission error.
 
+### Known limitation: networks that keep devices apart
+
+rtc-webCLI connects people **directly**. It has no relay (TURN server) of its own. So **if the network does not let two devices reach each other, they cannot connect**, and nothing in the page can change that. Common cases:
+
+- **Guest, venue, hotel, campus and café Wi-Fi** often use *client isolation*: every device can reach the internet, but not each other.
+- **Some home routers** isolate devices across bands (2.4 vs 5 GHz), across mesh nodes or extenders, or on a guest network.
+- **A VPN or "secure Wi-Fi" feature** on one device may block local traffic.
+- **A firewall** on one device may block incoming connections.
+
+**How to tell:** the failure shows as `BOTH_PRIVATE_BLOCKED` ("Both devices offered their local addresses, but nothing got through"). To confirm it is the network and not the app, run `npm start` on one device and open `http://<its local IP>:8080` from the other. **If that page does not load either, the network is keeping the devices apart.**
+
+**What works instead:**
+- **Cellular on the phone.** Over the open internet, a direct path usually exists (tested: Android on cellular ↔ Mac on home Wi-Fi, video both ways).
+- **A network that allows it**, or turning off isolation / the VPN / the firewall.
+- **Your own TURN server** under Network settings. Media then passes through that server, still encrypted, and the roster says so.
+
+**Over the internet, direct paths can fail too.** Some carrier and corporate networks block them (for example, strict NAT on both sides, or UDP blocked). Without a relay those pairs fail as well, and the roster names the failure. How often this happens has not been measured (RT22 has one cellular run).
+
+**Recorded case (2026-11-22, v0.3.0):** Android Chrome 157 ↔ macOS Chromium 160, same home Wi-Fi, both on 192.168.0.x. Both sides shared real local addresses; all five relays passing; `BOTH_PRIVATE_BLOCKED`. Still failed with the phone's mobile data off. **The phone could not load a web page from the Mac by IP address.** On the same Wi-Fi, an iPhone connected to the Mac. Still open: whether the iPhone can load that page (decides whether the Mac or the phone's connection is what blocks), and the phone's band, access point and VPN state.
+
 ### Troubleshooting: "Couldn't reach X directly"
 
 <p align="center"><img src="docs/img/same-network.svg" alt="Before, a phone could not resolve the laptop's hidden name. Now the page shares the laptop's real local address and the phone connects." width="820"></p>
 
-**Same Wi-Fi, but they do not connect.** On v0.2.0, a phone and a laptop on the same home Wi-Fi did not connect, while the same pair connected with the phone on cellular. **Hypothesis (not confirmed):** both browsers hide their local address behind a random `.local` name, and when the other device cannot resolve it, the only path left is through the router's public address, which most home routers do not loop back. On cellular that second path is a normal internet route, which would explain why it worked. v0.3.0 puts your real local address back into the candidates it sends:
+**Same Wi-Fi, but they do not connect.** There are two different causes, and the failure code tells them apart. **(1) Hidden addresses (`MY_MDNS` / `THEIR_MDNS`):** browsers hide their local address behind a random `.local` name, which other devices often cannot resolve. The page can fix this (below). **(2) The network keeps the devices apart (`BOTH_PRIVATE_BLOCKED`):** the page cannot fix this; see [Known limitation](#known-limitation-networks-that-keep-devices-apart). The phone-and-laptop failure first seen on v0.2.0 turned out to be (2): on v0.3.0 both sides shared real addresses and it still failed, and the phone could not reach the laptop by IP at all. For (1), v0.3.0 puts your real local address back into the candidates it sends:
 - **Served by `server.js`:** the server tells each browser its own address (`/whoami`), so this works from the start. `/whoami` answers only when it is certain: not behind a tunnel or proxy, and only for a local caller.
 - **Static host, including the live site:** nothing can tell the page its address until the browser reveals it, which happens once you allow microphone access: press **Allow local connections** in the failed pair's roster entry (or `/localfix`), or turn on **Mic** or **Camera**. Both sides need to do it. The page then picks the address up and shares it, and new connection attempts carry it; in testing the pair connected 9 to 48 seconds later, depending on where the library's retry cycle was. Until then the failure message names the hidden `.local` addresses and says so.
 - Tested with two default-settings Chromium windows on one machine, in both setups, and Chromium with Firefox on one machine served by `server.js` (they connect, which they did not before), including connecting after the microphone was allowed **without a reload**. **Not yet re-tested on a phone and laptop**; the manual rows are in the RT22 table.
@@ -275,7 +295,7 @@ Camera, microphone, screen capture and the cryptography need `https://` or `http
 
 **Every failure now names one cause (or says it does not know).** The roster entry shows a code and plain-language text: `MY_MDNS` (your browser hides your address: press **Allow local connections**, which also shows as a banner), `THEIR_MDNS` (theirs does: if the two of you are connected some other way, they are asked to allow it; otherwise tell them), `NO_REMOTE_HOST` (their device offered no local address at all), `BOTH_PRIVATE_BLOCKED` (both offered local addresses and nothing got through: this network may keep devices apart, or a firewall is blocking incoming connections), `DIFFERENT_NETWORKS`, `LAN_ONLY`, `NO_CANDIDATES`, `NO_ANSWER` (someone announced themselves but their answer never arrived: introduction relays, not addresses) and `UNKNOWN`, which never guesses. **Copy diagnostic** (or `/diag`) copies what the attempt looked like, with candidates reduced to type, protocol and address class and **no IP addresses**, to attach to a report. A pair that is not connected cannot be sent a message, so asking the other side to allow local connections only works when you are already connected some other way.
 
-If it still fails, the router is probably blocking devices from reaching each other (client or AP isolation, common on guest Wi-Fi): turn that off, or add your own TURN server. The console line with both sides' address kinds is the useful report.
+If it still fails with `BOTH_PRIVATE_BLOCKED`, run the page-by-IP check in [Known limitation](#known-limitation-networks-that-keep-devices-apart). The console line with both sides' address kinds, and **Copy diagnostic**, are the useful report.
 
 The roster entry (and console line) lists the kinds of addresses each side offered. The usual causes:
 
@@ -360,13 +380,17 @@ Chrome, Firefox, Safari on macOS, iOS Safari and Android Chrome, every pair, aud
 | 2026-11-21 | Android Chrome ↔ Chrome (macOS), 3 people | phone on **cellular**, laptop on home Wi-Fi | video both ways, audio (muted) | pass | direct, via STUN |
 | 2026-11-21 | Android Chrome ↔ Chrome (macOS) | **both on the same home Wi-Fi** | joining | **fail**: did not connect. Message shown on the phone: **not recorded**. Cause: **not diagnosed** (hidden `.local` addresses, or the router not looping traffic back, or client isolation) | none |
 | 2026-11-22 | **iOS Safari ↔ Chrome (macOS)** (T6a) | **same home Wi-Fi** | joining | **pass**. Not recorded: build, iPhone model and iOS version, path shown (local network or via STUN), whether Mic, Camera or Allow local connections was pressed first, media exercised | not recorded |
+| 2026-11-22 | **Android Chrome 157 ↔ macOS Chromium 160** (T1/T2), v0.3.0 | same home Wi-Fi, both 192.168.0.x | joining with address sharing on, mic allowed on the Mac | **fail**: `BOTH_PRIVATE_BLOCKED`. Both offered private host candidates; 5/5 relays passing on both | none |
+| 2026-11-22 | same pair, **phone mobile data off** | same home Wi-Fi only | joining | **fail**: same. Rules out the phone using two networks at once | none |
+| 2026-11-22 | same pair, **plain HTTP**: phone opens `http://<Mac IP>:8080` | same home Wi-Fi | network reachability, no WebRTC | **fail**: page does not load. **Cause: the network (or a device setting) keeps this phone and the Mac apart. Not an app fault** | n/a |
+| pending | iPhone opens `http://<Mac IP>:8080` | same home Wi-Fi | network reachability | not yet run. Loads → something isolates the Android phone only; fails → the Mac or the router blocks all, and the T6a call took another route | |
 | pending | **T1** Android ↔ Mac, same home Wi-Fi, neither presses anything (current build) | same Wi-Fi | joining; copy the diagnostic from the phone | not yet run | |
 | pending | **T2** as T1, then **both** press Allow local connections | same Wi-Fi | does address sharing fix it on Android? Key field: does the phone now offer a `private` host candidate? | not yet run | |
 | pending | **T7** as T2, with `chrome://flags/#enable-webrtc-hide-local-ips-with-mdns` Disabled in Android Chrome and the Mac | same Wi-Fi | takes the `.local` machinery out: no `private` host from the phone means Android is not offering local addresses (cause B) | not yet run | |
 | pending | **T6b** a **second Android device** ↔ Mac, T2 setup | same Wi-Fi | one phone, or Android in general | not yet run | |
 | pending | **T6c** Android ↔ iPhone, T2 setup | same Wi-Fi | does the failure follow the phone or the Android↔Mac pairing | not yet run | |
 
-**What the T6a pass rules out, for this network and this Mac:** router isolation and the Mac's firewall. The leading hypothesis for the Android failure is now Android-specific: that phone not offering a reachable local address, or address sharing not taking effect on it. That is **one phone**; nothing here says "Android" until T6b. Diagnostics from every run go in [`test/field/`](test/field/) (see its README); each is the JSON from **Copy diagnostic** (or `/diag`) and contains no IP addresses.
+**Correction (2026-11-22):** an earlier version said the T6a pass ruled out router isolation and the Mac's firewall. It does not: the iPhone call's path was not recorded, and it may have gone through the router's public address instead of directly. The plain-HTTP failure shows the Android phone cannot reach the Mac at all on this network, so the cause is network-level, not Android WebRTC. Rows T1, T2, T7, T6b and T6c above are superseded for this question; T6b (a second Android device) still matters for the device matrix. Diagnostics from every run go in [`test/field/`](test/field/) (see its README); each is the JSON from **Copy diagnostic** (or `/diag`) and contains no IP addresses.
 
 Not yet run: Firefox, Safari on macOS, iOS Safari, and every pair involving them. Any failing pair is listed here.
 
@@ -424,8 +448,10 @@ What this README and the About page may say. RT23 reviews them against this list
 - On the same network, the page shares your local address so connections can work without `.local` names. State the mechanism ("is designed to"), and the condition: served by `server.js`, or after Mic or Camera is allowed.
 - The app can be installed and opens offline; a call still needs a network connection for introductions.
 - Works for small rooms. Quote a number only when it comes from the RT9 table, with the date and hardware.
+- Connects across the open internet **in the pairs tested** (name them from RT22), with no account and no server of ours. Always paired with the limitation: networks that keep devices apart, and some internet paths, need a relay this tool does not provide.
 
 **Not allowed**
+- "WebRTC for everyone", "works on any network", "works on any Wi-Fi".
 - "Works offline", "offline-first" or "offline calls" unqualified: only the app opens offline, and a call needs the network.
 - "Serverless" unqualified (introductions use third-party relays); "zero egress" or "nothing leaves your device".
 - "Zoom replacement" or "Zoom alternative", without the cap in the same sentence.
