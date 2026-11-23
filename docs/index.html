@@ -112,7 +112,11 @@
   #chatBar .row { display:flex; gap:6px; align-items:center; }
   #chatBar select { flex:1; }
   #chatIn { flex:1; }
-  #consoleWrap { flex:1; min-height:0; display:flex; flex-direction:column; }
+  #consoleWrap { flex:1; min-height:0; display:flex; flex-direction:column; position:relative; }
+  #consoleCopy { position:absolute; top:6px; right:14px; z-index:2; width:32px; height:32px; min-height:0; padding:0; display:inline-flex; align-items:center; justify-content:center; opacity:.8; }
+  #consoleCopy:hover, #consoleCopy:focus-visible { opacity:1; }
+  #consoleCopy.done { color:var(--ok, #3fb950); }
+  #consoleOut { user-select:text; -webkit-user-select:text; padding-right:52px; }
   #consoleOut { flex:1; overflow:auto; padding:8px 12px; white-space:pre-wrap; word-break:break-word; }
   #consoleOut .err { color:var(--bad); }
   #consoleOut .cmd { color:var(--acc); }
@@ -330,6 +334,7 @@
     </div>
     <div id="consoleWrap" class="hidden">
       <div id="consoleOut" class="mono"></div>
+      <button id="consoleCopy" type="button" title="Copy the console output (or just the selected text)" aria-label="Copy the console output"></button>
       <div id="consoleBar"><input id="consoleIn" class="mono" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send" placeholder="/help"><button id="consoleRun" class="primary cbtn" type="button" title="Run the command" aria-label="Run the command"><span class="lbl">Run</span></button></div>
     </div>
   </div>
@@ -458,6 +463,8 @@ const ICONS = {
   more: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
   maximize: '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
   pin: '<line x1="12" y1="17" x2="12" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  check: '<polyline points="20 6 9 17 4 12"/>',
   send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
 };
 function svgIcon(name) {
@@ -702,6 +709,27 @@ function log(text, cls = '') {
   out.append(line);
   while (out.childNodes.length > 500) out.firstChild.remove();
   out.scrollTop = out.scrollHeight;
+}
+
+// Copies the selected console text, or the whole console when nothing in it is selected.
+async function copyConsole() {
+  const out = $('#consoleOut');
+  const sel = window.getSelection();
+  const picked = sel && !sel.isCollapsed && out.contains(sel.anchorNode) ? sel.toString() : '';
+  const text = picked || [...out.childNodes].map((n) => n.textContent).join('\n');
+  const btn = $('#consoleCopy');
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch {
+    const ta = el('textarea', { style: 'position:fixed;opacity:0' });
+    ta.value = text; document.body.append(ta); ta.select();
+    try { ok = document.execCommand('copy'); } catch { /* no clipboard access */ }
+    ta.remove();
+  }
+  btn.replaceChildren(svgIcon(ok ? 'check' : 'copy'));
+  btn.classList.toggle('done', ok);
+  btn.title = ok ? (picked ? 'Copied the selection' : 'Copied the console output') : 'Copy failed: select the text and copy it by hand';
+  setTimeout(() => { btn.replaceChildren(svgIcon('copy')); btn.classList.remove('done'); btn.title = 'Copy the console output (or just the selected text)'; }, 1500);
 }
 
 // ---------------------------------------------------------------------------
@@ -3386,6 +3414,9 @@ function submitConsole() {
 }
 $('#consoleIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitConsole(); });
 $('#consoleRun').prepend(svgIcon('send'));
+$('#consoleCopy').append(svgIcon('copy'));
+$('#consoleCopy').onmousedown = (e) => e.preventDefault(); // keep the text selection
+$('#consoleCopy').onclick = copyConsole;
 $('#consoleRun').onclick = submitConsole;
 
 bootLanding();

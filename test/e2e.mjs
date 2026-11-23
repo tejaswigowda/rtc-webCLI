@@ -525,6 +525,17 @@ try {
   check('both inputs ask phone keyboards for a Send key', await A.evaluate(() => document.querySelector('#consoleIn').enterKeyHint === 'send' && document.querySelector('#chatIn').enterKeyHint === 'send'));
   await A.click('#tabConsole');
 
+  // --- Console copy button -------------------------------------------------------------------------------------------
+  await A.evaluate(() => { window.__copied = null; Object.defineProperty(navigator, 'clipboard', { value: { writeText: async (t) => { window.__copied = t; } }, configurable: true }); });
+  await A.click('#consoleCopy');
+  const copiedAll = await A.evaluate(() => window.__copied);
+  check('the console copy button copies the whole console', copiedAll && /Room cap/.test(copiedAll) && copiedAll === (await A.evaluate(() => [...document.querySelectorAll('#consoleOut > *')].map((n) => n.textContent).join('\n'))));
+  check('...and shows a check mark, then returns to the copy icon', (await A.getAttribute('#consoleCopy svg', 'data-name')) === 'check' && await until(async () => (await A.getAttribute('#consoleCopy svg', 'data-name')) === 'copy', 4000));
+  await A.evaluate(() => { const n = document.querySelector('#consoleOut > *'); const r = document.createRange(); r.selectNodeContents(n); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
+  await A.click('#consoleCopy');
+  check('...and copies only the selection when text is selected', await A.evaluate(() => window.__copied === document.querySelector('#consoleOut > *').textContent));
+  await A.evaluate(() => getSelection().removeAllRanges());
+
   // --- Tooltips on every button, select and summary ------------------------------------------------------------------------
   const untitled = (pg) => pg.evaluate(() => [...document.querySelectorAll('button, select, summary')].filter((e) => !e.title).map((e) => e.id || e.textContent.trim().slice(0, 24)));
   await sleep(200);

@@ -79,6 +79,8 @@ Everything after the `#` stays in your browser. A new room is a new secret; ther
 
 - **Installable, Opens Offline (PWA)**: like the other webCLIs, it has a web app manifest, icons (including maskable ones) and a service worker, so it can be installed from the browser (an install icon appears in the header where the browser offers it; on iPhone use Share, then Add to Home Screen) and it **opens without a network** from the cache of its own files: the page, the About page, the pinned libraries and the diagrams. **A call still needs a network**, because introductions go through public relays; offline, the start screen says so. The worker is network-first, so online you always get the current release (the page and the libraries it checks by SHA-256 never come from different releases), and it never handles `/whoami` or `/lan.json`, WebSockets or media
 
+- **Copyable Console**: a copy icon in the console copies everything in it, or just the selected text if you have selected some (the clipboard needs https or localhost; otherwise it falls back to the browser's copy command)
+
 - **Tooltips on Everything**: every button, select and disclosure explains itself on hover or long-press, including dialog and banner buttons and the named reactions; a test fails if any control lacks one
 
 - **New Room (+)**: a **+** in the header, and the logo, go back to the start screen with no invite in the address bar. They always ask first, saying what will happen: in a room you are disconnected from everyone and your devices stop; with only an invite open, the invite is dropped from the address bar (if you created the room, the prompt reminds you to copy the link). **+** is hidden on a bare start screen, where there is nowhere to go back to
