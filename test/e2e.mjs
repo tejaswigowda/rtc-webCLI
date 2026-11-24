@@ -556,6 +556,20 @@ try {
     dg.mine === 'MY_MDNS' && dg.bothBlocked === 'BOTH_PRIVATE_BLOCKED' && dg.noRemoteHost === 'NO_REMOTE_HOST' && dg.theirs === 'THEIR_MDNS' && dg.lanOnly === 'LAN_ONLY' && dg.different === 'DIFFERENT_NETWORKS' && dg.none === 'NO_CANDIDATES' && dg.unknown === 'UNKNOWN', JSON.stringify(dg));
   check('SW4 candidate classes: mdns, private, public, relay', dg.cls === 'mdns,private,public,relay', dg.cls);
 
+  // --- The invite address setting only exists on localhost --------------------------------------------------------------
+  await A.click('#tabConsole').catch(() => {});
+  check('on localhost the invite address field is shown', await A.evaluate(() => !!document.querySelector('#setInviteHost').offsetParent || getComputedStyle(document.querySelector('#setInviteHost')).display !== 'none'));
+  const hostedPage = await (await browser.newContext()).newPage();
+  await hostedPage.route('http://invite-test.example/**', (route) => {
+    const u = new URL(route.request().url());
+    return fetch(ORIGIN + u.pathname + u.search).then(async (r) => route.fulfill({ status: r.status, contentType: r.headers.get('content-type') || 'text/html', body: Buffer.from(await r.arrayBuffer()) }));
+  });
+  await hostedPage.addInitScript(() => localStorage.setItem('rtc.settings', JSON.stringify({ inviteHost: '10.9.9.9:1234' })));
+  await hostedPage.goto('http://invite-test.example/').catch(() => {});
+  const hosted = await hostedPage.evaluate(() => ({ hidden: [...document.querySelectorAll('.loopback-only')].every((n) => getComputedStyle(n).display === 'none'), n: document.querySelectorAll('.loopback-only').length })).catch(() => null);
+  check('on a hosted origin the field and its label are hidden', !!hosted && hosted.n === 2 && hosted.hidden, JSON.stringify(hosted));
+  await hostedPage.context().close();
+
   // --- DX1-DX3: the diagnostic reads the checks, and never reports zeros it did not measure -----------------------------
   const dx = await A.evaluate(async () => {
     const c = (type, addrClass) => ({ type, protocol: 'udp', addrClass });

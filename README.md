@@ -259,7 +259,7 @@ The server listens on all interfaces and prints your network address. It also se
 
 When the page is opened on `localhost`, **Copy invite** and **QR** use the https LAN address (from `/lan.json`) instead of `127.0.0.1`, so other devices can open them. If someone opens the plain `http://<LAN IP>:8080` address instead, the page explains why it is blocked and links to the same invite on the https address. `NO_HTTPS=1` turns https off; `TLS_KEY` and `TLS_CERT` use your own certificate; `HTTPS_PORT` changes the port.
 
-**Other static servers (VS Code Live Server, `python -m http.server`, ...)** work too, including when you open `http://127.0.0.1:5500/docs`. They cannot report your LAN address, so the page tries to detect it from the browser. Many browsers hide it, in which case the **QR** dialog asks for it (for example `192.168.0.5:5500`). You can also set it under **Network settings** or with `/invitehost <host:port>`.
+**Other static servers (VS Code Live Server, `python -m http.server`, ...)** work too, including when you open `http://127.0.0.1:5500/docs`. They cannot report your LAN address, so the page tries to detect it from the browser. Many browsers hide it, in which case the **QR** dialog asks for it (for example `192.168.0.5:5500`). You can also set it under **Network settings** or with `/invitehost <host:port>`. This setting exists only on `localhost`: on a hosted page the invite always uses the address you opened, and the field is hidden.
 
 **VS Code Live Server over https:** run `npm run cert`. It writes the same certificate and prints the `liveServer.settings.https` JSON to paste into your VS Code settings. Restart Live Server, then open the `https://` address it shows.
 

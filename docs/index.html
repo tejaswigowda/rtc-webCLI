@@ -295,8 +295,8 @@
         <input id="setTurnUser" type="text" autocomplete="off" placeholder="TURN username" style="flex:1">
         <input id="setTurnCred" type="password" autocomplete="off" placeholder="TURN credential" style="flex:1">
       </div>
-      <label for="setInviteHost">Invite address, if the link shows 127.0.0.1 (your LAN address, e.g. 192.168.0.5:5500)</label>
-      <input id="setInviteHost" type="text" autocomplete="off" placeholder="blank = detect automatically">
+      <label for="setInviteHost" class="loopback-only">Invite address, if the link shows 127.0.0.1 (your LAN address, e.g. 192.168.0.5:5500)</label>
+      <input id="setInviteHost" class="loopback-only" type="text" autocomplete="off" placeholder="blank = detect automatically">
       <label for="setRelays">Introduction relays (comma-separated wss:// URLs; blank = built-in list)</label>
       <input id="setRelays" type="text" autocomplete="off">
       <div class="row"><button id="btnSaveSettings" title="Save these network settings on this device">Save settings</button><span class="dim" id="settingsNote"></span></div>
@@ -605,9 +605,9 @@ function resolveInviteBase(force = false) {
   if (force) inviteBaseReady = null;
   inviteBaseReady ??= (async () => {
     inviteBase = defaultInviteBase;
+    if (!isLoopbackHost(location.hostname)) return; // a hosted page's own address is already the right one
     const manual = parseInviteHost(settings.inviteHost);
     if (manual) { inviteBase = manual + APP_DIR; return; }
-    if (!isLoopbackHost(location.hostname)) return;
     try {
       if (!SERVED_BY_SERVER) throw new Error('static host');
       const res = await fetch(new URL('lan.json', location.origin + APP_DIR), { cache: 'no-store' });
@@ -3194,7 +3194,7 @@ const COMMANDS = {
       '/remove <peer>    ask everyone to disconnect a peer (a request, not enforcement)',
       '/move [all|peer…] move to a new room with the chosen people',
       '/invite | /qr     copy the invite link / show its QR code',
-      '/invitehost <host:port>|auto   set the LAN address used in invite links',
+      '/invitehost <host:port>|auto   set the LAN address used in invite links (localhost only)',
       '/lan on|off       LAN only (no STUN) — applies on next join',
       '/shareaddr on|off share your local network address so same-network devices connect (default on)',
       '/diag [peer]      copy what the latest failed connection looked like (no IP addresses in it)',
@@ -3293,6 +3293,7 @@ const COMMANDS = {
   qr() { return showQr(); },
   async invitehost(args) {
     if (!args.length) { log(`Invite links use ${inviteBase}`); return; }
+    if (!isLoopbackHost(location.hostname)) { log(`Not needed here: invite links use the address you opened (${inviteBase}). /invitehost only applies on localhost.`); return; }
     if (args[0] === 'auto') settings.inviteHost = '';
     else if (parseInviteHost(args[0])) settings.inviteHost = args[0];
     else { log('Usage: /invitehost <LAN host:port> | auto   (not a loopback address)', 'err'); return; }
@@ -3412,6 +3413,8 @@ function bootLanding() {
   $('#setTurnCred').value = settings.turnCred;
   $('#setRelays').value = settings.relays;
   $('#setInviteHost').value = settings.inviteHost;
+  // Only meaningful when the page is opened on localhost: anywhere else the invite uses the address you opened.
+  if (!isLoopbackHost(location.hostname)) document.querySelectorAll('.loopback-only').forEach((n) => n.classList.add('hidden'));
 
   const insecure = !window.isSecureContext || !crypto?.subtle;
   if (insecure) {
@@ -3464,7 +3467,7 @@ function bootLanding() {
     settings.turnUser = $('#setTurnUser').value;
     settings.turnCred = $('#setTurnCred').value;
     settings.relays = $('#setRelays').value.trim();
-    settings.inviteHost = $('#setInviteHost').value.trim();
+    if (isLoopbackHost(location.hostname)) settings.inviteHost = $('#setInviteHost').value.trim();
     saveSettings();
     resolveInviteBase(true).then(refresh);
     const bad = parseRelayList(settings.relays).rejected;
