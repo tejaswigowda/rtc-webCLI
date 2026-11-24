@@ -299,7 +299,7 @@
       <input id="setInviteHost" class="loopback-only" type="text" autocomplete="off" placeholder="blank = detect automatically">
       <label for="setRelays">Introduction relays (comma-separated wss:// URLs; blank = built-in list)</label>
       <input id="setRelays" type="text" autocomplete="off">
-      <div class="row"><button id="btnSaveSettings" title="Save these network settings on this device">Save settings</button><span class="dim" id="settingsNote"></span></div>
+      <div class="row"><button id="btnSaveSettings" title="Use these network settings until this tab is closed. Nothing is kept after that.">Save settings</button><span class="dim" id="settingsNote"></span></div>
     </details>
   </div>
 
@@ -400,6 +400,15 @@ const CONNECT_TIMEOUT_MS = 15000;
 const RELAY_GRACE_MS = 8000;
 const HELLO_TIMEOUT_MS = 6000;
 const WARMUP_MS = 12000;
+// Nothing is kept. Everything this app stores lives in sessionStorage (the browser drops it when the tab closes), and it is
+// also deleted explicitly when you leave or the page goes away. Earlier versions used localStorage: those leftovers are
+// removed on load. Only keys starting with "rtc." are touched, because other tools share this origin.
+const OWN_KEY = /^rtc\./;
+function wipeStoredData(stores = [sessionStorage, localStorage]) {
+  for (const store of stores) { try { for (const k of Object.keys(store)) if (OWN_KEY.test(k)) store.removeItem(k); } catch { /* storage blocked */ } }
+}
+wipeStoredData([localStorage]);
+let keepStorage = false; // set only for a reload the app starts itself, such as joining a new room
 const SETTINGS_KEY = 'rtc.settings';
 // Keyed to the notice text: bump the number whenever the text changes, so people who accepted an older one see it again.
 const IP_NOTICE_VERSION = 2;
@@ -410,7 +419,7 @@ const AUTOJOIN_KEY = 'rtc.autojoin';
 // Test hook, honoured on localhost only: {protocol, audioCap, videoCap}.
 const DEV = (() => {
   if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) return {};
-  try { return JSON.parse(localStorage.getItem('rtc.dev') || '{}'); } catch { return {}; }
+  try { return JSON.parse(sessionStorage.getItem('rtc.dev') || '{}'); } catch { return {}; }
 })();
 const PROTOCOL = DEV.protocol ?? 3;
 const audioCap = DEV.audioCap ?? AUDIO_CAP;
@@ -516,13 +525,13 @@ async function createHostKey() {
   const kp = await crypto.subtle.generateKey(ecdsa, true, ['sign', 'verify']);
   const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
   const h = b64u.enc((await sha256(raw)).slice(0, 16));
-  localStorage.setItem(HOST_KEY_PREFIX + h, JSON.stringify({ jwk: await crypto.subtle.exportKey('jwk', kp.privateKey), pub: b64u.enc(raw) }));
+  sessionStorage.setItem(HOST_KEY_PREFIX + h, JSON.stringify({ jwk: await crypto.subtle.exportKey('jwk', kp.privateKey), pub: b64u.enc(raw) }));
   return h;
 }
 async function loadHostKey(h) {
   if (!h) return null;
   try {
-    const saved = JSON.parse(localStorage.getItem(HOST_KEY_PREFIX + h) || 'null');
+    const saved = JSON.parse(sessionStorage.getItem(HOST_KEY_PREFIX + h) || 'null');
     if (!saved) return null;
     return { privateKey: await crypto.subtle.importKey('jwk', saved.jwk, ecdsa, false, ['sign']), pub: b64u.dec(saved.pub) };
   } catch { return null; }
@@ -627,10 +636,10 @@ const inviteUrl = (secret, h = parseHostHash()) => inviteBase + '#k=' + b64u.enc
 // ---------------------------------------------------------------------------
 const settings = (() => {
   let s = {};
-  try { s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
+  try { s = JSON.parse(sessionStorage.getItem(SETTINGS_KEY) || '{}'); } catch {}
   return { name: '', lan: false, stun: DEFAULT_STUN, turnUrl: '', turnUser: '', turnCred: '', relays: '', inviteHost: '', camId: '', micId: '', spkId: '', mirror: true, sounds: true, layout: 'grid', shareLan: true, myLan: '', ...s };
 })();
-const saveSettings = () => localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+const saveSettings = () => sessionStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 // ws:// would put the room topic and your IP on the network in plaintext, so it is accepted for loopback only.
 function parseRelayList(str) {
   const ok = [], rejected = [];
@@ -802,7 +811,7 @@ function chooseLocalAddress() {
   const body = [
     'Browsers hide this device\'s local address until a page is allowed the microphone or camera. Devices on the same Wi-Fi need that address to connect to you directly. Two ways to give it:',
     '1. Ask the browser: you will see a microphone prompt. Nothing is turned on, recorded or sent, and the microphone is released straight away.',
-    '2. Type this device\'s address yourself (in Wi-Fi settings, or ipconfig / ifconfig). No permission prompt. It is kept on this device and shared only with people in this room.',
+    '2. Type this device\'s address yourself (in Wi-Fi settings, or ipconfig / ifconfig). No permission prompt. It is kept only until you leave or close this tab, and shared only with people in this room.',
   ];
   if (ff) body.push('Firefox: the microphone prompt can be dismissed or blocked without you noticing, and Firefox may keep hiding the address afterwards. Typing the address is the more dependable option there.');
   const node = el('div', {}, input, el('div', { style: 'margin-top:8px' }, el('button', { class: 'primary', text: 'Use this address', title: 'Share the address you typed instead of asking the browser', onclick: apply })), note);
@@ -2432,6 +2441,7 @@ async function goToRoom(secretB64) {
   if (REC.on) await stopRecording();
   stopAllTracks();
   sessionStorage.setItem(AUTOJOIN_KEY, '1');
+  keepStorage = true; // the page reloads straight into the new room; the settings stay for that one reload
   location.hash = '#k=' + secretB64 + (S.hostHash ? '&h=' + S.hostHash : '');
   location.reload();
 }
@@ -3083,6 +3093,19 @@ function stopAllTracks() {
 }
 const allTracksEnded = () => [...S.allTracks].every((t) => t.readyState === 'ended');
 
+// Forget everything this page held about the call: messages, people, failures, recording data, the invite secret, the
+// invite in the address bar, and the stored settings.
+function wipeSession() {
+  S.chat.msgs = []; S.chat.rendered = 0; S.chat.unread = 0;
+  for (const id of ['chatOut', 'consoleOut', 'roster', 'tiles']) $('#' + id)?.replaceChildren();
+  S.peers.clear(); S.requests = []; S.seenKeys.clear();
+  failures.length = 0; S.lastDiagnostic = null;
+  REC.chunks = [];
+  S.secret = null; S.hostHash = null; S.hostKey = null; S.roomId = null;
+  history.replaceState(null, '', location.pathname + location.search);
+  wipeStoredData();
+}
+
 async function leave(why) {
   if (S.left) return;
   S.left = true;
@@ -3095,8 +3118,9 @@ async function leave(why) {
   await Promise.race([sendBye(), sleep(400)]);
   try { await S.room?.leave(); } catch {}
   for (const pc of [...allPCs]) { try { pc.close(); } catch {} }
-  if (why === 'new') { history.replaceState(null, '', location.pathname + location.search); location.reload(); return; }
   const ended = allTracksEnded();
+  wipeSession();
+  if (why === 'new') { location.reload(); return; }
   $('#room').classList.add('hidden');
   setInRoom(false);
   document.querySelectorAll('audio[data-kind]').forEach((a) => a.remove());
@@ -3104,14 +3128,17 @@ async function leave(why) {
   if (why === 'full') body.push(`Rooms are capped at ${audioCap} people. Everyone connects directly to everyone else, so each extra person adds upload for all of them. A server would be needed to go past that, and this app deliberately has none.`, 'The cap is provisional and has not been measured yet. You were disconnected from everyone, so nobody is left with a half-open connection to you.');
   else if (others === 0) body.push('You were the last one here. This room no longer exists anywhere. Whoever opens the link next starts a fresh, empty room.');
   else body.push(`You left. The room continues for ${others} ${others === 1 ? 'other person' : 'other people'} while any of them stays.`);
+  body.push('Nothing was kept: your settings, chat, console and the invite link were cleared from this page and this browser tab.');
   body.push(S.allTracks.size
     ? `Camera, microphone and screen capture stopped. Verified: ${[...S.allTracks].filter((t) => t.readyState === 'ended').length} of ${S.allTracks.size} tracks report "ended".${ended ? '' : ' Some did not; reload this page.'}`
     : 'You never turned on camera, microphone or screen share.');
   showScreen({ title: why === 'full' ? `This room is full (${audioCap} people)` : 'You left the room', body, actions: [{ label: 'Back to start', fn: () => { history.replaceState(null, '', location.pathname + location.search); location.reload(); } }] });
 }
 
-addEventListener('pagehide', (e) => { if (!e.persisted) sendBye(); try { stopAllTracks(); } catch {} });
-addEventListener('beforeunload', (e) => { if (REC.on) { e.preventDefault(); e.returnValue = ''; } });
+addEventListener('pagehide', (e) => { if (!e.persisted) { sendBye(); if (!keepStorage) wipeStoredData(); } try { stopAllTracks(); } catch {} });
+// Closing or reloading the tab ends the call and deletes everything, so the browser is asked to confirm. (Browsers show
+// their own wording, and only once the page has been interacted with.)
+addEventListener('beforeunload', (e) => { if (!keepStorage && S.room && !S.left) { e.preventDefault(); e.returnValue = ''; } });
 
 // ---------------------------------------------------------------------------
 // Invite / QR (RT1)
@@ -3480,10 +3507,10 @@ function bootLanding() {
   $('#btnJoin').onclick = () => {
     settings.name = nameIn.value.trim().slice(0, 24);
     saveSettings();
-    if (localStorage.getItem(IP_NOTICE_KEY)) { startJoin(); return; }
+    if (sessionStorage.getItem(IP_NOTICE_KEY)) { startJoin(); return; }
     // Show the address that would be shared, so a wrong one is visible before anything is sent.
     resolveOwnLan(true).then(() => {
-      const earlier = IP_NOTICE_OLD_KEYS.some((k) => localStorage.getItem(k));
+      const earlier = IP_NOTICE_OLD_KEYS.some((k) => sessionStorage.getItem(k));
       const body = [];
       if (earlier) body.push('New: on the same network, people in the room now also get your local network address. This notice changed, so you are seeing it again.');
       body.push('Others in the room can see your IP address. The introduction servers see it too.');
@@ -3496,7 +3523,7 @@ function bootLanding() {
       showScreen({
         title: 'Before you join',
         body,
-        actions: [{ label: 'Join anyway', cls: 'primary', fn: () => { localStorage.setItem(IP_NOTICE_KEY, '1'); startJoin(); } }, { label: 'Cancel' }],
+        actions: [{ label: 'Join anyway', cls: 'primary', fn: () => { sessionStorage.setItem(IP_NOTICE_KEY, '1'); startJoin(); } }, { label: 'Cancel' }],
       });
     });
   };

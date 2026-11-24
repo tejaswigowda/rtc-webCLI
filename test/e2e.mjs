@@ -41,11 +41,11 @@ async function open(name, { url = ORIGIN + '/', dev = {}, relays = relay.url, la
   const ctx = await browser.newContext({ permissions: ['camera', 'microphone', 'clipboard-read', 'clipboard-write'] });
   if (clockShift) await ctx.addInitScript((shift) => { const real = Date.now.bind(Date); Date.now = () => real() + shift; }, clockShift);
   await ctx.addInitScript(({ dev, relays, lan, name }) => {
-    if (!localStorage.getItem('rtc.settings')) {
-      localStorage.setItem('rtc.settings', JSON.stringify({ name, lan, relays }));
-      localStorage.setItem('rtc.ipNotice.2', '1');
+    if (!sessionStorage.getItem('rtc.settings')) {
+      sessionStorage.setItem('rtc.settings', JSON.stringify({ name, lan, relays }));
+      sessionStorage.setItem('rtc.ipNotice.2', '1');
     }
-    if (Object.keys(dev).length) localStorage.setItem('rtc.dev', JSON.stringify(dev));
+    if (Object.keys(dev).length) sessionStorage.setItem('rtc.dev', JSON.stringify(dev));
   }, { dev, relays, lan, name });
   const page = await ctx.newPage();
   page.on('request', (r) => requests.push(r.url()));
@@ -274,8 +274,8 @@ try {
   for (const [n, share] of [['Gus', true], ['Gia', true]]) {
     const ctx = await maskedBrowser.newContext();
     await ctx.addInitScript(({ relays, n, share }) => {
-      localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: false, relays, shareLan: share }));
-      localStorage.setItem('rtc.ipNotice.2', '1');
+      sessionStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: false, relays, shareLan: share }));
+      sessionStorage.setItem('rtc.ipNotice.2', '1');
     }, { relays: relay.url, n, share });
     const pg = await ctx.newPage();
     await pg.goto(sameNetUrl); await join(pg);
@@ -318,8 +318,8 @@ try {
   // --- RV3: the join notice is keyed to its text ----------------------------------------------------------------
   const oldCtx = await browser.newContext();
   await oldCtx.addInitScript(({ relays }) => {
-    localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Old', lan: true, relays }));
-    localStorage.setItem('rtc.ipNoticeSeen', '1'); // accepted on v0.1 / v0.2
+    sessionStorage.setItem('rtc.settings', JSON.stringify({ name: 'Old', lan: true, relays }));
+    sessionStorage.setItem('rtc.ipNoticeSeen', '1'); // accepted on v0.1 / v0.2
   }, { relays: relay.url });
   const oldPage = await oldCtx.newPage();
   await oldPage.goto(`${ORIGIN}/#k=${'O'.repeat(22)}`);
@@ -330,7 +330,7 @@ try {
   check('RV8 the notice shows the address that would be shared', /\(\d+\.\d+\.\d+\.\d+\)/.test(noticeText), noticeText.match(/\(\d+\.\d+\.\d+\.\d+\)/)?.[0] || 'none');
   await oldPage.click('#overlayCard button:has-text("Join anyway")');
   await oldPage.waitForSelector('#room:not(.hidden)');
-  check('RV3 accepting stores the current notice key only', await oldPage.evaluate(() => !!localStorage.getItem('rtc.ipNotice.2')));
+  check('RV3 accepting stores the current notice key only', await oldPage.evaluate(() => !!sessionStorage.getItem('rtc.ipNotice.2')));
   await oldCtx.close();
 
   // --- RV4: what is passed to the library is explicit, and the page opens sockets only to declared hosts ----------
@@ -338,7 +338,7 @@ try {
   check('RV4 LAN-only: relay list and ICE servers passed to the library are exactly the declared ones', cfgProblems.length === 0, cfgProblems.join('; '));
   const wsHosts = [];
   const cfgCtx = await browser.newContext();
-  await cfgCtx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Cfg', lan: false, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+  await cfgCtx.addInitScript(({ relays }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ name: 'Cfg', lan: false, relays })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
   const cfgPage = await cfgCtx.newPage();
   cfgPage.on('websocket', (ws) => wsHosts.push(new URL(ws.url()).host));
   await cfgPage.goto(`${ORIGIN}/#k=${'F'.repeat(22)}`); await join(cfgPage);
@@ -374,7 +374,7 @@ try {
   const sPages = [], sReqs = [];
   for (const n of ['Sia', 'Sol']) {
     const ctx = await maskedStatic.newContext(); // no pre-granted permission: that alone would unmask the addresses
-    await ctx.addInitScript(({ relays, n }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n });
+    await ctx.addInitScript(({ relays, n }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n });
     const pg = await ctx.newPage();
     pg.on('request', (r) => sReqs.push(r.url()));
     await pg.goto(staticUrl); await join(pg);
@@ -410,7 +410,7 @@ try {
   const tPages = [];
   for (const n of ['Tia', 'Tom']) {
     const ctx = await maskedStatic.newContext();
-    await ctx.addInitScript(({ relays, n }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n });
+    await ctx.addInitScript(({ relays, n }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n });
     const pg = await ctx.newPage();
     await pg.goto(tUrl); await join(pg);
     tPages.push(pg);
@@ -432,7 +432,7 @@ try {
   const subnet = (lanNow || '192.168.0.1').split('.').slice(0, 3).join('.');
   for (const [n, bogus] of [['Uma', subnet + '.250'], ['Una', subnet + '.251']]) {
     const ctx = await maskedStatic.newContext();
-    await ctx.addInitScript(({ relays, n, bogus }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays, myLan: bogus })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n, bogus });
+    await ctx.addInitScript(({ relays, n, bogus }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays, myLan: bogus })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url, n, bogus });
     const pg = await ctx.newPage();
     await pg.goto(`http://localhost:${staticSrv.address().port}/docs/#k=${'U'.repeat(22)}`); await join(pg);
     uPages.push(pg);
@@ -456,7 +456,7 @@ try {
   const guests = [];
   for (let i = 0; i < 2; i++) {
     const ctx = await browser.newContext();
-    await ctx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+    await ctx.addInitScript(({ relays }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ lan: true, relays })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
     const pg = await ctx.newPage();
     await pg.goto(guestUrl); await join(pg);
     guests.push(pg);
@@ -471,7 +471,7 @@ try {
 
   // --- Small screens ---------------------------------------------------------------------------------------------
   const phoneCtx = await browser.newContext({ viewport: { width: 360, height: 700 }, isMobile: true, hasTouch: true });
-  await phoneCtx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Mo', lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+  await phoneCtx.addInitScript(({ relays }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ name: 'Mo', lan: true, relays })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
   const mp = await phoneCtx.newPage();
   const noOverflow = () => mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1 && document.body.scrollWidth <= innerWidth + 1);
   await mp.goto(`${ORIGIN}/#k=${'M2'.padEnd(22, 'm')}`);
@@ -495,7 +495,7 @@ try {
 
   // --- "+" (new room) confirms before going back to the start screen -------------------------------------------------
   const nctx = await browser.newContext();
-  await nctx.addInitScript(({ relays }) => { localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Nia', lan: true, relays })); localStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
+  await nctx.addInitScript(({ relays }) => { sessionStorage.setItem('rtc.settings', JSON.stringify({ name: 'Nia', lan: true, relays })); sessionStorage.setItem('rtc.ipNotice.2', '1'); }, { relays: relay.url });
   const np = await nctx.newPage();
   await np.goto(`${ORIGIN}/`);
   check('"+" is hidden on a bare start screen', !(await np.isVisible('#btnNew')));
@@ -564,11 +564,35 @@ try {
     const u = new URL(route.request().url());
     return fetch(ORIGIN + u.pathname + u.search).then(async (r) => route.fulfill({ status: r.status, contentType: r.headers.get('content-type') || 'text/html', body: Buffer.from(await r.arrayBuffer()) }));
   });
-  await hostedPage.addInitScript(() => localStorage.setItem('rtc.settings', JSON.stringify({ inviteHost: '10.9.9.9:1234' })));
+  await hostedPage.addInitScript(() => sessionStorage.setItem('rtc.settings', JSON.stringify({ inviteHost: '10.9.9.9:1234' })));
   await hostedPage.goto('http://invite-test.example/').catch(() => {});
   const hosted = await hostedPage.evaluate(() => ({ hidden: [...document.querySelectorAll('.loopback-only')].every((n) => getComputedStyle(n).display === 'none'), n: document.querySelectorAll('.loopback-only').length })).catch(() => null);
   check('on a hosted origin the field and its label are hidden', !!hosted && hosted.n === 2 && hosted.hidden, JSON.stringify(hosted));
   await hostedPage.context().close();
+
+  // --- Nothing is kept: leftovers are removed, the page asks before closing, and going away deletes the data -------------
+  const nctx2 = await browser.newContext();
+  await nctx2.addInitScript(() => { localStorage.setItem('rtc.settings', '{"name":"Old"}'); localStorage.setItem('rtc.host.abc', '{}'); localStorage.setItem('rtc.ipNotice.2', '1'); localStorage.setItem('other-tool.key', 'keep'); });
+  const lp = await nctx2.newPage();
+  await lp.goto(ORIGIN + '/');
+  const legacy = await lp.evaluate(() => ({ own: Object.keys(localStorage).filter((k) => /^rtc\./.test(k)), other: localStorage.getItem('other-tool.key') }));
+  check('settings, creator keys and notice flags saved by earlier versions in localStorage are deleted; other tools\' keys are not', legacy.own.length === 0 && legacy.other === 'keep', JSON.stringify(legacy));
+  const dialogs = [];
+  lp.on('dialog', async (d) => { dialogs.push(d.type()); await d.dismiss().catch(() => {}); });
+  await lp.close({ runBeforeUnload: true });
+  check('closing the tab on the start screen (not in a room) does not ask', dialogs.length === 0 || lp.isClosed(), dialogs.join());
+  const bp = await open('Bea'); await create(bp); await join(bp);
+  await bp.evaluate(() => { document.body.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+  await bp.click('#tabConsole').catch(() => {});
+  const bd = [];
+  bp.on('dialog', async (d) => { bd.push(d.type()); await d.dismiss().catch(() => {}); });
+  await bp.close({ runBeforeUnload: true });
+  await sleep(500);
+  check('closing the tab in a room asks for confirmation first, and Stay keeps the call', bd.includes('beforeunload') && !bp.isClosed(), bd.join());
+  check('...Stay leaves the stored settings in place', await bp.evaluate(() => Object.keys(sessionStorage).some((k) => /^rtc\./.test(k)) && !window.rtc.S.left));
+  await bp.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: false })));
+  check('when the page goes away it deletes every stored key (sessionStorage and localStorage)', await bp.evaluate(() => Object.keys(sessionStorage).concat(Object.keys(localStorage)).every((k) => !/^rtc\./.test(k))));
+  await bp.context().close(); await nctx2.close();
 
   // --- DX1-DX3: the diagnostic reads the checks, and never reports zeros it did not measure -----------------------------
   const dx = await A.evaluate(async () => {
@@ -661,7 +685,14 @@ try {
   const gC = await open('Ivy', { url: gUrl }); await join(gC);
   await Promise.all([connectedReady(gA, 2), connectedReady(gB, 2), connectedReady(gC, 2)]);
   const rosterNames = (pg) => pg.evaluate(() => [...document.querySelectorAll('#roster .rrow .nm')].map((n) => n.textContent));
+  await gC.click('#tabChat'); await gC.fill('#chatIn', 'something to forget'); await gC.click('#chatSend');
+  await until(async () => /something to forget/.test(await gA.textContent('#chatOut').catch(() => '')) || (await gA.click('#tabChat').then(() => false, () => false)), 15000);
+  const keptBefore = await gC.evaluate(() => Object.keys(sessionStorage).filter((k) => /^rtc\./.test(k)).length);
+  check('before leaving the page holds stored settings and a chat message', keptBefore > 0 && /something to forget/.test(await gC.textContent('#chatOut')));
   await gC.click('#btnLeave').catch(() => {}); await gC.click('#overlayCard button:has-text("Leave")').catch(() => {});
+  const wiped = await gC.evaluate(() => ({ keys: Object.keys(sessionStorage).concat(Object.keys(localStorage)).filter((k) => /^rtc\./.test(k)), hash: location.hash, chat: document.querySelector('#chatOut').children.length, consoleLines: document.querySelector('#consoleOut').children.length, secret: window.rtc.S.secret, msgs: window.rtc.S.chat.msgs.length, peers: window.rtc.S.peers.size }));
+  check('leaving deletes everything: stored settings, chat, console, roster, the invite secret and the invite in the address bar', wiped.keys.length === 0 && wiped.hash === '' && wiped.chat === 0 && wiped.consoleLines === 0 && wiped.secret === null && wiped.msgs === 0 && wiped.peers === 0, JSON.stringify(wiped));
+  check('...and the leave screen says nothing was kept', /Nothing was kept/.test(await gC.textContent('#overlayCard')));
   const gone1 = await until(async () => (await peerCount(gA)) === 1 && (await peerCount(gB)) === 1, 5000, 100);
   check('leave button: the leaver is off the others\' lists within 5 seconds', gone1);
   const namesAfter = await rosterNames(gA);
@@ -830,8 +861,8 @@ try {
   });
   const bctx = await blocked.newContext();
   await bctx.addInitScript(({ relays }) => {
-    localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Gina', lan: true, relays }));
-    localStorage.setItem('rtc.ipNotice.2', '1');
+    sessionStorage.setItem('rtc.settings', JSON.stringify({ name: 'Gina', lan: true, relays }));
+    sessionStorage.setItem('rtc.ipNotice.2', '1');
   }, { relays: relay.url });
   const G = await bctx.newPage();
   const failUrl = ORIGIN + '/#k=' + 'U'.repeat(22);
@@ -866,8 +897,8 @@ try {
   // The default Chromium masks local IPs with mDNS, so detection fails and the QR dialog asks for the address.
   const masked = await chromium.launch();
   const mctx = await masked.newContext();
-  await mctx.addInitScript(() => localStorage.setItem('rtc.settings', JSON.stringify({ name: 'Liv', lan: true, relays: 'ws://127.0.0.1:1' })));
-  await mctx.addInitScript(() => localStorage.setItem('rtc.ipNotice.2', '1'));
+  await mctx.addInitScript(() => sessionStorage.setItem('rtc.settings', JSON.stringify({ name: 'Liv', lan: true, relays: 'ws://127.0.0.1:1' })));
+  await mctx.addInitScript(() => sessionStorage.setItem('rtc.ipNotice.2', '1'));
   const L = await mctx.newPage();
   await L.goto(plainUrl);
   await L.click('#btnCreate');
@@ -899,8 +930,8 @@ try {
   for (const n of ['Hal', 'Hel']) {
     const ctx = await hiddenBrowser.newContext({ permissions: ['camera', 'microphone'] });
     await ctx.addInitScript(({ relays, n }) => {
-      localStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays }));
-      localStorage.setItem('rtc.ipNotice.2', '1');
+      sessionStorage.setItem('rtc.settings', JSON.stringify({ name: n, lan: true, relays }));
+      sessionStorage.setItem('rtc.ipNotice.2', '1');
     }, { relays: relay.url, n });
     const pg = await ctx.newPage();
     await pg.goto(hiddenUrl); await join(pg);
